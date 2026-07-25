@@ -33,4 +33,26 @@ public class DiscordChannelStatusUpdateTests
 
         appliedStatuses.Should().Equal("Offline", "Online");
     }
+
+    [Theory]
+    [InlineData("❌trades", "✅", "✅trades")]
+    [InlineData("✅❌trades", "❌", "❌trades")]
+    [InlineData("🟢-trades", "✅", "✅trades")]
+    [InlineData("🔴・trades", "✅", "✅trades")]
+    [InlineData("📣announcements", "✅", "✅📣announcements")]
+    public void Apply_ReconcilesLiveNameToExactlyOneStatusEmoji(
+        string currentName,
+        string desiredEmoji,
+        string expected)
+    {
+        DiscordChannelStatusName.Apply(currentName, desiredEmoji, "✅", "❌")
+            .Should().Be(expected);
+    }
+
+    [Fact]
+    public void Apply_RemovesPreviouslyConfiguredCustomStatusEmoji()
+    {
+        DiscordChannelStatusName.Apply("🔵trades", "🟣", "🟣", "🔵")
+            .Should().Be("🟣trades");
+    }
 }

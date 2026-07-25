@@ -96,7 +96,8 @@ public static class WebApiExtensions
                 return;
             }
 
-            TryAddUrlReservation(_webPort);
+            if (_main!.Config.Hub.WebServer.AllowExternalConnections)
+                TryAddUrlReservation(_webPort);
 
             lock (_portLock)
             {
@@ -257,9 +258,14 @@ public static class WebApiExtensions
     {
         try
         {
-            TryAddUrlReservation(_webPort);
+            if (_main!.Config.Hub.WebServer.AllowExternalConnections)
+                TryAddUrlReservation(_webPort);
 
-            _server = new BotServer(_main!, _webPort, _tcpPort);
+            _server = new BotServer(
+                _main!,
+                _webPort,
+                _tcpPort,
+                _main!.Config.Hub.WebServer.AllowExternalConnections);
             _server.Start();
 
             _monitorCts?.Cancel();
@@ -313,7 +319,11 @@ public static class WebApiExtensions
     {
         try
         {
-            _server = new BotServer(_main!, _webPort, _tcpPort);
+            _server = new BotServer(
+                _main!,
+                _webPort,
+                _tcpPort,
+                _main!.Config.Hub.WebServer.AllowExternalConnections);
             _server.Start();
             StartTcp();
             CreatePortFile();

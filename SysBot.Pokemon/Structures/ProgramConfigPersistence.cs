@@ -162,6 +162,14 @@ public static class ProgramConfigPersistence
         if (HasEntries(discord.RoleFavored) && hub.Favoritism.Mode == FavoredMode.None)
             messages.Add("Config warning: Discord.RoleFavored has entries, but Favoritism.Mode is None; favored users will not receive priority.");
 
+        if ((discord.ChannelStatus || discord.BotEmbedStatus) && !HasEntries(discord.ChannelWhitelist))
+            messages.Add("Config warning: Discord channel status is enabled, but ChannelWhitelist has no entries; there are no explicit channels to update.");
+
+        if (discord.ChannelStatus && (string.IsNullOrWhiteSpace(discord.OnlineEmoji) || string.IsNullOrWhiteSpace(discord.OfflineEmoji)))
+            messages.Add("Config warning: Discord.ChannelStatus is enabled, but OnlineEmoji or OfflineEmoji is empty.");
+        else if (discord.ChannelStatus && discord.OnlineEmoji.Trim() == discord.OfflineEmoji.Trim())
+            messages.Add("Config warning: Discord OnlineEmoji and OfflineEmoji are identical; channel names cannot show the current state.");
+
         var twitch = hub.Twitch;
         if (!string.IsNullOrWhiteSpace(twitch.Token) && (string.IsNullOrWhiteSpace(twitch.Username) || string.IsNullOrWhiteSpace(twitch.Channel)))
             messages.Add("Config warning: Twitch token is set, but Twitch.Username or Twitch.Channel is empty; Twitch integration will not start.");

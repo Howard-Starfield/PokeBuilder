@@ -350,7 +350,14 @@ public sealed class SysCord<T> where T : PKM, new()
     private async Task HandleDiscordReady()
     {
         _discordReady = true;
+        _channelStatusUpdate.SetDesired(GetCurrentBotStatus());
         await ReconcileChannelStatusAsync().ConfigureAwait(false);
+    }
+
+    private string GetCurrentBotStatus()
+    {
+        lock (_botConnectionLock)
+            return Runner.IsRunning && _connectedBots.Count > 0 ? "Online" : "Offline";
     }
 
     private Task ReconcileChannelStatusAsync()
@@ -371,9 +378,10 @@ public sealed class SysCord<T> where T : PKM, new()
         {
             try
             {
-                ITextChannel? textChannel = _client.GetChannel(channelId) as ITextChannel;
-                if (textChannel == null)
-                    textChannel = await _client.Rest.GetChannelAsync(channelId).ConfigureAwait(false) as ITextChannel;
+                // Always read through REST so reconciliation uses Discord's actual
+                // channel name rather than a potentially stale gateway cache.
+                ITextChannel? textChannel =
+                    await _client.Rest.GetChannelAsync(channelId).ConfigureAwait(false) as ITextChannel;
 
                 if (textChannel == null)
                 {
@@ -382,7 +390,11 @@ public sealed class SysCord<T> where T : PKM, new()
                 }
 
                 var currentName = textChannel.Name;
-                var updatedChannelName = $"{emoji}{TrimStatusEmoji(currentName)}";
+                var updatedChannelName = DiscordChannelStatusName.Apply(
+                    currentName,
+                    emoji,
+                    SysCordSettings.Settings.OnlineEmoji,
+                    SysCordSettings.Settings.OfflineEmoji);
                 if (currentName != updatedChannelName)
                 {
                     var options = new RequestOptions { CancelToken = cancellationToken };
@@ -606,24 +618,6 @@ public sealed class SysCord<T> where T : PKM, new()
         var finalResponse = $"{randomResponse}";
 
         await msg.Channel.SendMessageAsync(finalResponse).ConfigureAwait(false);
-    }
-
-    private static string TrimStatusEmoji(string channelName)
-    {
-        var onlineEmoji = SysCordSettings.Settings.OnlineEmoji;
-        var offlineEmoji = SysCordSettings.Settings.OfflineEmoji;
-
-        if (channelName.StartsWith(onlineEmoji))
-        {
-            return channelName[onlineEmoji.Length..].Trim();
-        }
-
-        if (channelName.StartsWith(offlineEmoji))
-        {
-            return channelName[offlineEmoji.Length..].Trim();
-        }
-
-        return channelName.Trim();
     }
 
     private Task Client_PresenceUpdated(SocketUser user, SocketPresence before, SocketPresence after)

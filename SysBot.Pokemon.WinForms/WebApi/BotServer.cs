@@ -14,17 +14,23 @@ using System.Windows.Forms;
 using System.Drawing;
 using SysBot.Base;
 using SysBot.Pokemon;
+using SysBot.Pokemon.Helpers;
 using SysBot.Pokemon.WinForms.WebApi.Models;
 using static SysBot.Pokemon.WinForms.WebApi.RestartManager;
 
 namespace SysBot.Pokemon.WinForms.WebApi;
 
-public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDisposable
+public partial class BotServer(
+    Main mainForm,
+    int port = 8080,
+    int tcpPort = 8081,
+    bool allowExternalConnections = false) : IDisposable
 {
     private HttpListener? _listener;
     private Thread? _listenerThread;
     private readonly int _port = port;
     private readonly int _tcpPort = tcpPort;
+    private readonly bool _allowExternalConnections = allowExternalConnections;
     private readonly CancellationTokenSource _cts = new();
     private readonly Main _mainForm = mainForm ?? throw new ArgumentNullException(nameof(mainForm));
     private volatile bool _running;
@@ -115,11 +121,17 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
             try
             {
-                _listener.Prefixes.Add($"http://+:{_port}/");
+                foreach (string prefix in WebServerBinding.GetHttpPrefixes(_port, _allowExternalConnections))
+                    _listener.Prefixes.Add(prefix);
+
                 _listener.Start();
-                LogUtil.LogInfo($"Web server listening on all interfaces at port {_port}", "WebServer");
+                LogUtil.LogInfo(
+                    _allowExternalConnections
+                        ? $"Web server listening on all interfaces at port {_port}"
+                        : $"Web server listening on localhost only at port {_port}",
+                    "WebServer");
             }
-            catch (HttpListenerException ex) when (ex.ErrorCode == 5)
+            catch (HttpListenerException ex) when (_allowExternalConnections && ex.ErrorCode == 5)
             {
                 _listener = new HttpListener();
                 _listener.Prefixes.Add($"http://localhost:{_port}/");

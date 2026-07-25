@@ -188,6 +188,21 @@ public class ProgramConfigPersistenceTests
         }
     }
 
+    [Fact]
+    public void Validate_WarnsWhenDiscordChannelStatusCannotIdentifyAChannelOrState()
+    {
+        var config = new ProgramConfig();
+        config.Hub.Discord.ChannelWhitelist.List.Clear();
+        config.Hub.Discord.ChannelStatus = true;
+        config.Hub.Discord.OnlineEmoji = "🟢";
+        config.Hub.Discord.OfflineEmoji = "🟢";
+
+        var warnings = ProgramConfigPersistence.Validate(config);
+
+        warnings.Should().Contain(message => message.Contains("ChannelWhitelist has no entries"));
+        warnings.Should().Contain(message => message.Contains("OnlineEmoji and OfflineEmoji are identical"));
+    }
+
     private static string CreateTempDirectory()
     {
         var dir = Path.Combine(Path.GetTempPath(), "sysbot-config-tests", Guid.NewGuid().ToString("N"));

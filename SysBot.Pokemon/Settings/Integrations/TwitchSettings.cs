@@ -36,10 +36,12 @@ public class TwitchSettings
     [Category(Operation), Description("Throttle the bot from sending messages if X messages have been sent in the past Y seconds.")]
     public double ThrottleSeconds { get; set; } = 30;
 
-    [Category(Operation), Description("Throttle the bot from sending whispers if X messages have been sent in the past Y seconds.")]
+    [Browsable(false)]
+    [Description("Legacy TwitchLib setting retained for config compatibility. TwitchLib now uses one shared outbound message throttle.")]
     public int ThrottleWhispers { get; set; } = 100;
 
-    [Category(Operation), Description("Throttle the bot from sending whispers if X messages have been sent in the past Y seconds.")]
+    [Browsable(false)]
+    [Description("Legacy TwitchLib setting retained for config compatibility. TwitchLib now uses one shared outbound message throttle.")]
     public double ThrottleWhispersSeconds { get; set; } = 60;
 
     // Operation

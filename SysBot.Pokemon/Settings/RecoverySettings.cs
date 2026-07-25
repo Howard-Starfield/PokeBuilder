@@ -33,7 +33,8 @@ public class RecoverySettings
     [Category(Recovery), Description("Enables recovery for bots that were intentionally stopped (useful for network disconnections).")]
     public bool RecoverIntentionalStops { get; set; } = false;
 
-    [Category(Recovery), Description("Delay in seconds to wait after a successful recovery before resetting the attempt counter.")]
+    [Browsable(false)]
+    [Description("Legacy duplicate retained for config compatibility. MinimumStableUptimeSeconds controls recovery-attempt reset timing.")]
     public int SuccessfulRecoveryResetDelaySeconds { get; set; } = 300; // 5 minutes
 
     [Category(Recovery), Description("Send notifications when a bot crashes and recovery is attempted.")]

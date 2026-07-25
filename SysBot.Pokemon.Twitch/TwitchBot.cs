@@ -31,15 +31,12 @@ namespace SysBot.Pokemon.Twitch
 
             var credentials = new ConnectionCredentials(settings.Username.ToLower(), settings.Token);
 
-            var clientOptions = new ClientOptions
-            {
-                // message queue capacity is managed (10_000 for message & whisper separately)
-                // message send interval is managed (50ms for each message sent)
-            };
+            var clientOptions = new ClientOptions();
+            var sendOptions = new ConfiguredTwitchSendOptions(settings);
 
             Channel = settings.Channel;
             WebSocketClient customClient = new(clientOptions);
-            client = new TwitchClient(customClient);
+            client = new TwitchClient(customClient, sendOptions: sendOptions);
 
             var cmd = settings.CommandPrefix;
             client.Initialize(credentials, Channel);
