@@ -2,9 +2,12 @@ name: .NET Core Desktop
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "main" ]
+
+permissions:
+  contents: write
 
 jobs:
   version-check:
@@ -15,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Read Current Version
         id: read_version
         run: |
@@ -25,15 +30,13 @@ jobs:
       - name: Compare Versions
         id: compare_versions
         run: |
-          LAST_VERSION=${{ secrets.LAST_KNOWN_VERSION }}
           CURRENT_VERSION=${{ env.CURRENT_VERSION }}
-          echo "Last known version: $LAST_VERSION"
           echo "Current version: $CURRENT_VERSION"
-          if [ "$CURRENT_VERSION" == "$LAST_VERSION" ]; then
-            echo "No version change detected."
+          if git rev-parse "$CURRENT_VERSION" >/dev/null 2>&1; then
+            echo "Release tag already exists."
             echo "version_changed=false" >> $GITHUB_OUTPUT
           else
-            echo "Version change detected."
+            echo "New release tag detected."
             echo "version_changed=true" >> $GITHUB_OUTPUT
           fi
 
@@ -51,15 +54,13 @@ jobs:
       - name: Install .NET Core
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
-      - name: Setup MSBuild.exe
-        uses: microsoft/setup-msbuild@v2
+          dotnet-version: 10.0.x
       - name: Restore dependencies
-        run: dotnet restore ${{ env.Project_Name }} --runtime win-x64
+        run: dotnet restore ${{ env.Project_Name }} --runtime win-x86
       - name: Build
-        run: dotnet build ${{ env.Project_Name }} --configuration Release --no-restore
+        run: dotnet build ${{ env.Project_Name }} --configuration Release --no-restore -m:1 -nr:false
       - name: Publish
-        run: dotnet publish ${{ env.Project_Name }} --configuration Release --output ./publish /p:PublishSingleFile=true /p:SelfContained=false /p:RuntimeIdentifier=win-x64
+        run: dotnet publish ${{ env.Project_Name }} --configuration Release --output ./publish --no-restore /p:PublishSingleFile=true /p:SelfContained=false /p:RuntimeIdentifier=win-x86
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -68,7 +69,7 @@ jobs:
 
   create-release:
     needs: [version-check, build]
-    if: needs.version-check.outputs.version_changed == 'true'
+    if: github.event_name == 'push' && needs.version-check.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -81,50 +82,15 @@ jobs:
           CURRENT_VERSION=$(grep 'public const string Version' SysBot.Pokemon/Helpers/PokeBot.cs | sed 's/.*Version = "\(.*\)";/\1/')
           echo "Current version is $CURRENT_VERSION"
           echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
-      - name: Get Recent Changes
-        id: recent_changes
-        run: |
-          LAST_VERSION=${{ secrets.LAST_KNOWN_VERSION }}
-          if [ -z "$LAST_VERSION" ] || ! git rev-parse "$LAST_VERSION" >/dev/null 2>&1; then
-            echo "LAST_VERSION is not set or not found, using initial commit"
-            LAST_VERSION=$(git rev-list --max-parents=0 HEAD)
-          fi
-          RECENT_CHANGES=$(git log --pretty=format:"- %s" $LAST_VERSION..HEAD)
-          echo "RECENT_CHANGES<<EOF" >> $GITHUB_ENV
-          echo "$RECENT_CHANGES" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           name: PokeBot
           path: ./publish
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-        with:
-          tag_name: ${{ env.CURRENT_VERSION }}
-          release_name: Release ${{ env.CURRENT_VERSION }}
-          body: |
-            ## Recent Changes
-            ${{ env.RECENT_CHANGES }}
-          draft: false
-          prerelease: false
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./publish/PokeBot.exe
-          asset_name: PokeBot.exe
-          asset_content_type: application/octet-stream
-      - name: Update Last Known Version
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          gh secret set LAST_KNOWN_VERSION -b"${{ env.CURRENT_VERSION }}"
-          echo "LAST_KNOWN_VERSION updated to $CURRENT_VERSION"
+          gh release create "${{ env.CURRENT_VERSION }}" ./publish/PokeBot.exe \
+            --title "Release ${{ env.CURRENT_VERSION }}" \
+            --generate-notes

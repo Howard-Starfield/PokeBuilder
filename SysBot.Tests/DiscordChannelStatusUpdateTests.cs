@@ -55,4 +55,27 @@ public class DiscordChannelStatusUpdateTests
         DiscordChannelStatusName.Apply("🔵trades", "🟣", "🟣", "🔵")
             .Should().Be("🟣trades");
     }
+
+    [Fact]
+    public void GetCurrent_WhenConnectionEventWasMissed_UsesLiveRunnerState()
+    {
+        DiscordBotStatus.GetCurrent([(true, true)])
+            .Should().Be("Online");
+    }
+
+    [Theory]
+    [MemberData(nameof(OfflineBotStates))]
+    public void GetCurrent_WhenNoRunningBotConnectionIsActive_ReturnsOffline(
+        (bool IsRunning, bool IsConnected)[] botStates)
+    {
+        DiscordBotStatus.GetCurrent(botStates).Should().Be("Offline");
+    }
+
+    public static TheoryData<(bool IsRunning, bool IsConnected)[]> OfflineBotStates => new()
+    {
+        new (bool IsRunning, bool IsConnected)[] { },
+        new (bool IsRunning, bool IsConnected)[] { (false, false) },
+        new (bool IsRunning, bool IsConnected)[] { (true, false) },
+        new (bool IsRunning, bool IsConnected)[] { (false, true) },
+    };
 }

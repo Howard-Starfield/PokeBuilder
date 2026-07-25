@@ -356,8 +356,11 @@ public sealed class SysCord<T> where T : PKM, new()
 
     private string GetCurrentBotStatus()
     {
-        lock (_botConnectionLock)
-            return Runner.IsRunning && _connectedBots.Count > 0 ? "Online" : "Offline";
+        // Connection events can fire before Discord finishes subscribing during
+        // a fast startup. The runner is the authoritative source at Ready time
+        // and during periodic reconciliation.
+        return DiscordBotStatus.GetCurrent(
+            Runner.Bots.Select(bot => (bot.IsRunning, bot.Bot.Connection.Connected)));
     }
 
     private Task ReconcileChannelStatusAsync()
@@ -748,6 +751,7 @@ public sealed class SysCord<T> where T : PKM, new()
             if (DateTime.UtcNow >= nextChannelStatusCheck)
             {
                 nextChannelStatusCheck = DateTime.UtcNow.AddMinutes(1);
+                _channelStatusUpdate.SetDesired(GetCurrentBotStatus());
                 await ReconcileChannelStatusAsync().ConfigureAwait(false);
             }
 
