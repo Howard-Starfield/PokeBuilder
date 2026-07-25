@@ -1,5 +1,6 @@
 using FluentAssertions;
 using SysBot.Pokemon.Discord;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,7 +18,7 @@ public class DiscordChannelStatusUpdateTests
         var appliedStatuses = new List<string>();
 
         update.SetDesired("Offline");
-        var applyUpdate = update.ApplyAsync(async (status, token) =>
+        var applyUpdate = update.ApplyAsync(async (status, attempt, token) =>
         {
             appliedStatuses.Add(status);
             if (status == "Offline")
@@ -25,6 +26,8 @@ public class DiscordChannelStatusUpdateTests
                 firstUpdateStarted.SetResult();
                 await Task.Delay(Timeout.Infinite, token);
             }
+
+            return true;
         });
 
         await firstUpdateStarted.Task;
@@ -32,6 +35,50 @@ public class DiscordChannelStatusUpdateTests
         await applyUpdate;
 
         appliedStatuses.Should().Equal("Offline", "Online");
+    }
+
+    [Fact]
+    public async Task ApplyAsync_WhenStillIncorrect_TriesTwiceThenStops()
+    {
+        var update = new LatestStatusUpdate();
+        var attempts = new List<int>();
+        var delays = new List<TimeSpan>();
+
+        update.SetDesired("Online");
+        bool applied = await update.ApplyAsync(
+            (status, attempt, token) =>
+            {
+                attempts.Add(attempt);
+                return Task.FromResult(false);
+            },
+            (delay, token) =>
+            {
+                delays.Add(delay);
+                return Task.CompletedTask;
+            });
+
+        applied.Should().BeFalse();
+        attempts.Should().Equal(1, 2);
+        delays.Should().Equal(LatestStatusUpdate.RetryDelay);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_WhenSecondScanIsCorrect_StopsWithoutThirdAttempt()
+    {
+        var update = new LatestStatusUpdate();
+        var attempts = new List<int>();
+
+        update.SetDesired("Online");
+        bool applied = await update.ApplyAsync(
+            (status, attempt, token) =>
+            {
+                attempts.Add(attempt);
+                return Task.FromResult(attempt == 2);
+            },
+            (delay, token) => Task.CompletedTask);
+
+        applied.Should().BeTrue();
+        attempts.Should().Equal(1, 2);
     }
 
     [Theory]

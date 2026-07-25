@@ -63,6 +63,11 @@ public sealed class SysCord<T> where T : PKM, new()
     private readonly object _botConnectionLock = new object();
     private readonly IServiceProvider _services;
     private readonly LatestStatusUpdate _channelStatusUpdate = new();
+    private readonly object _channelStatusQueueLock = new();
+    private Task? _channelStatusQueueTask;
+    private bool _channelStatusQueueRequested;
+
+    private static readonly TimeSpan ChannelStatusVerificationDelay = TimeSpan.FromSeconds(5);
 
     private readonly HashSet<string> _validCommands =
     [
@@ -284,7 +289,7 @@ public sealed class SysCord<T> where T : PKM, new()
         if (SysCordSettings.Settings.BotEmbedStatus)
             await SendBotStatusAnnouncementAsync(status, color).ConfigureAwait(false);
 
-        await ReconcileChannelStatusAsync().ConfigureAwait(false);
+        QueueChannelStatusReconciliation();
     }
 
     private async Task SendBotStatusAnnouncementAsync(string status, EmbedColorOption color)
@@ -347,11 +352,12 @@ public sealed class SysCord<T> where T : PKM, new()
         }
     }
 
-    private async Task HandleDiscordReady()
+    private Task HandleDiscordReady()
     {
         _discordReady = true;
         _channelStatusUpdate.SetDesired(GetCurrentBotStatus());
-        await ReconcileChannelStatusAsync().ConfigureAwait(false);
+        QueueChannelStatusReconciliation();
+        return Task.CompletedTask;
     }
 
     private string GetCurrentBotStatus()
@@ -363,19 +369,66 @@ public sealed class SysCord<T> where T : PKM, new()
             Runner.Bots.Select(bot => (bot.IsRunning, bot.Bot.Connection.Connected)));
     }
 
-    private Task ReconcileChannelStatusAsync()
+    private void QueueChannelStatusReconciliation()
     {
         if (!_discordReady || !SysCordSettings.Settings.ChannelStatus)
-            return Task.CompletedTask;
+            return;
 
-        return _channelStatusUpdate.ApplyAsync(UpdateChannelNamesAsync);
+        lock (_channelStatusQueueLock)
+        {
+            _channelStatusQueueRequested = true;
+            if (_channelStatusQueueTask is { IsCompleted: false })
+                return;
+
+            _channelStatusQueueTask = Task.Run(ProcessChannelStatusQueueAsync);
+        }
     }
 
-    private async Task UpdateChannelNamesAsync(string status, CancellationToken cancellationToken)
+    private async Task ProcessChannelStatusQueueAsync()
+    {
+        while (true)
+        {
+            lock (_channelStatusQueueLock)
+                _channelStatusQueueRequested = false;
+
+            try
+            {
+                bool applied = await _channelStatusUpdate
+                    .ApplyAsync(UpdateChannelNamesAttemptAsync)
+                    .ConfigureAwait(false);
+
+                if (!applied && _discordReady)
+                {
+                    LogUtil.LogInfo(
+                        "SysCord",
+                        $"Discord channel status is still incorrect after {LatestStatusUpdate.MaxAttempts} attempts; stopping until the next status event.");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogUtil.LogInfo("SysCord", $"Discord channel status queue failed: {ex.Message}");
+            }
+
+            lock (_channelStatusQueueLock)
+            {
+                if (_channelStatusQueueRequested)
+                    continue;
+
+                _channelStatusQueueTask = null;
+                return;
+            }
+        }
+    }
+
+    private async Task<bool> UpdateChannelNamesAttemptAsync(
+        string status,
+        int attempt,
+        CancellationToken cancellationToken)
     {
         var emoji = status == "Online"
             ? SysCordSettings.Settings.OnlineEmoji
             : SysCordSettings.Settings.OfflineEmoji;
+        bool allChannelsCorrect = true;
 
         foreach (var channelId in SysCordSettings.Manager.WhitelistedChannels.List.Select(channel => channel.ID))
         {
@@ -389,6 +442,7 @@ public sealed class SysCord<T> where T : PKM, new()
                 if (textChannel == null)
                 {
                     LogUtil.LogInfo("SysCord", $"Channel {channelId} is not a text channel or could not be found");
+                    allChannelsCorrect = false;
                     continue;
                 }
 
@@ -398,10 +452,27 @@ public sealed class SysCord<T> where T : PKM, new()
                     emoji,
                     SysCordSettings.Settings.OnlineEmoji,
                     SysCordSettings.Settings.OfflineEmoji);
-                if (currentName != updatedChannelName)
+                if (currentName == updatedChannelName)
+                    continue;
+
+                LogUtil.LogInfo(
+                    "SysCord",
+                    $"Queueing Discord channel status change for {channelId} (attempt {attempt}/{LatestStatusUpdate.MaxAttempts}).");
+
+                var options = new RequestOptions { CancelToken = cancellationToken };
+                await textChannel.ModifyAsync(x => x.Name = updatedChannelName, options).ConfigureAwait(false);
+
+                await Task.Delay(ChannelStatusVerificationDelay, cancellationToken).ConfigureAwait(false);
+                ITextChannel? verifiedChannel =
+                    await _client.Rest.GetChannelAsync(channelId).ConfigureAwait(false) as ITextChannel;
+
+                if (verifiedChannel?.Name == updatedChannelName)
                 {
-                    var options = new RequestOptions { CancelToken = cancellationToken };
-                    await textChannel.ModifyAsync(x => x.Name = updatedChannelName, options).ConfigureAwait(false);
+                    LogUtil.LogInfo("SysCord", $"Discord channel status updated for {channelId}.");
+                }
+                else
+                {
+                    allChannelsCorrect = false;
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -411,12 +482,18 @@ public sealed class SysCord<T> where T : PKM, new()
             catch (HttpException ex) when (ex.DiscordCode == DiscordErrorCode.InsufficientPermissions)
             {
                 LogUtil.LogInfo("SysCord", $"Cannot update channel name for {channelId}: Missing Manage Channel permission");
+                allChannelsCorrect = false;
             }
             catch (Exception ex)
             {
-                LogUtil.LogInfo("SysCord", $"Failed to update channel name for {channelId}: {ex.Message}");
+                LogUtil.LogInfo(
+                    "SysCord",
+                    $"Discord channel status attempt {attempt}/{LatestStatusUpdate.MaxAttempts} failed for {channelId}: {ex.Message}");
+                allChannelsCorrect = false;
             }
         }
+
+        return allChannelsCorrect;
     }
 
     public async Task HandleBotStart()
@@ -742,19 +819,11 @@ public sealed class SysCord<T> where T : PKM, new()
     private async Task MonitorStatusAsync(CancellationToken token)
     {
         const int Interval = 20; // seconds
-        var nextChannelStatusCheck = DateTime.MinValue;
 
         // Check datetime for update
         UserStatus state = UserStatus.Idle;
         while (!token.IsCancellationRequested)
         {
-            if (DateTime.UtcNow >= nextChannelStatusCheck)
-            {
-                nextChannelStatusCheck = DateTime.UtcNow.AddMinutes(1);
-                _channelStatusUpdate.SetDesired(GetCurrentBotStatus());
-                await ReconcileChannelStatusAsync().ConfigureAwait(false);
-            }
-
             var time = DateTime.Now;
             var lastLogged = LogUtil.LastLogged;
             if (Hub.Config.Discord.BotColorStatusTradeOnly)

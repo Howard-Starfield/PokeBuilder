@@ -6,6 +6,9 @@ namespace SysBot.Pokemon.Discord;
 
 internal sealed class LatestStatusUpdate
 {
+    internal const int MaxAttempts = 2;
+    internal static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(15);
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _sync = new();
     private CancellationTokenSource? _activeApply;
@@ -34,9 +37,12 @@ internal sealed class LatestStatusUpdate
         }
     }
 
-    public async Task ApplyAsync(Func<string, CancellationToken, Task> apply)
+    public async Task<bool> ApplyAsync(
+        Func<string, int, CancellationToken, Task<bool>> apply,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         ArgumentNullException.ThrowIfNull(apply);
+        delay ??= Task.Delay;
 
         await _gate.WaitAsync().ConfigureAwait(false);
         try
@@ -50,19 +56,32 @@ internal sealed class LatestStatusUpdate
                     status = _desiredStatus;
 
                     if (status is null)
-                        return;
+                        return true;
 
                     applyCancellation = new CancellationTokenSource();
                     _activeApply = applyCancellation;
                 }
 
+                bool applied = false;
                 try
                 {
-                    await apply(status, applyCancellation.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (applyCancellation.IsCancellationRequested)
-                {
-                    // The desired status changed while Discord was waiting to apply this one.
+                    for (int attempt = 1; attempt <= MaxAttempts; attempt++)
+                    {
+                        try
+                        {
+                            applied = await apply(status, attempt, applyCancellation.Token).ConfigureAwait(false);
+                            if (applied)
+                                break;
+
+                            if (attempt < MaxAttempts)
+                                await delay(RetryDelay, applyCancellation.Token).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (applyCancellation.IsCancellationRequested)
+                        {
+                            // The desired status changed while Discord was waiting.
+                            break;
+                        }
+                    }
                 }
                 finally
                 {
@@ -77,7 +96,7 @@ internal sealed class LatestStatusUpdate
                 lock (_sync)
                 {
                     if (status == _desiredStatus)
-                        return;
+                        return applied;
                 }
             }
         }
