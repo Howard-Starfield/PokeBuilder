@@ -1,0 +1,108 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x86</RuntimeIdentifier>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>PokeBot</AssemblyName>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <DebugType>pdbonly</DebugType>
+  </PropertyGroup>
+  <PropertyGroup>
+    <PackageId>SysBot.Pokemon.WinForms</PackageId>
+    <Description>Nintendo Switch Pokémon Bot Manager</Description>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <StartupObject>SysBot.Pokemon.WinForms.Program</StartupObject>
+    <Version>01.00.00</Version>
+    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
+  </PropertyGroup>
+  <PropertyGroup>
+    <EmbedAllSources>true</EmbedAllSources>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
+    <Authors>Kaphotics, Gengar</Authors>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="Resources\bdsp_mode_image.png" />
+    <None Remove="Resources\BotControlPanel.css" />
+    <None Remove="Resources\BotControlPanel.html" />
+    <None Remove="Resources\BotControlPanel.js" />
+    <None Remove="Resources\LeftJoyCon.png" />
+    <None Remove="Resources\lgpe_mode_image.png" />
+    <None Remove="Resources\pla_mode_image.png" />
+    <None Remove="Resources\RightJoyCon.png" />
+    <None Remove="Resources\sv_mode_image.png" />
+    <None Remove="Resources\swsh_mode_image.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\bdsp_mode_image.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\BotControlPanel.css">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\BotControlPanel.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\BotControlPanel.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\LeftJoyCon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\lgpe_mode_image.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\pla_mode_image.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\RightJoyCon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\sv_mode_image.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\swsh_mode_image.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.17.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.17.0" />
+    <PackageReference Include="System.Resources.Extensions" Version="10.0.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SysBot.Base\SysBot.Base.csproj" />
+    <ProjectReference Include="..\SysBot.Pokemon.Discord\SysBot.Pokemon.Discord.csproj" />
+    <ProjectReference Include="..\SysBot.Pokemon.Twitch\SysBot.Pokemon.Twitch.csproj" />
+    <ProjectReference Include="..\SysBot.Pokemon.YouTube\SysBot.Pokemon.YouTube.csproj" />
+    <ProjectReference Include="..\SysBot.Pokemon\SysBot.Pokemon.csproj" />
+    <ProjectReference Include="..\SysBot.Pokemon.Z3\SysBot.Pokemon.Z3.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="PKHeX.Core" Version="26.7.7" />
+    <Reference Include="PKHeX.Core.AutoMod">
+      <HintPath>..\SysBot.Pokemon\deps\PKHeX.Core.AutoMod.dll</HintPath>
+    </Reference>
+    <Reference Include="PKHeX.Drawing">
+      <HintPath>deps\PKHeX.Drawing.dll</HintPath>
+    </Reference>
+    <Reference Include="PKHeX.Drawing.PokeSprite">
+      <HintPath>deps\PKHeX.Drawing.PokeSprite.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>
