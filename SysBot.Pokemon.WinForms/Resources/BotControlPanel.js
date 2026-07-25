@@ -2,7 +2,7 @@
  * @fileoverview Bot Control Panel - Modern ES6+ refactored version
  * @description Manages bot instances, provides real-time monitoring, and controls for SysBot.NET
  * @version 2.0.0
- * @author hexbyt3
+ * @maintainer Howard-Starfield
  */
 
 'use strict';

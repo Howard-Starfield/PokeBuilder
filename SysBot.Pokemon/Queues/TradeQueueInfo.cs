@@ -431,7 +431,7 @@ public sealed record TradeQueueInfo<T>(PokeTradeHub<T> Hub)
         }
     }
 
-    // Genpkm method
+    // Aggregate queued and in-progress batch trades for status reporting.
     public (int effectiveCount, int processingBatchTrades) GetQueueStats()
     {
         lock (_sync)

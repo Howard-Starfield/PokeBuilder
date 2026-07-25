@@ -973,20 +973,8 @@ public static class QueueHelper<T> where T : PKM, new()
 
     private static string GetEggTypeImageUrl(T pk)
     {
-        var pi = pk.PersonalInfo;
-        byte typeIndex = pi.Type1;
-
-        string[] typeNames = [
-            "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost",
-            "Steel", "Fire", "Water", "Grass", "Electric", "Psychic", "Ice", "Dragon",
-            "Dark", "Fairy"
-        ];
-
-        string typeName = (typeIndex >= 0 && typeIndex < typeNames.Length)
-            ? typeNames[typeIndex]
-            : "Normal";
-
-        return $"https://raw.githubusercontent.com/hexbyt3/HomeImages/ebd562941ff77b1889a297ee50eacfa8cb3589de/128x128/Egg_{typeName}.png";
+        _ = pk;
+        return "https://raw.githubusercontent.com/Howard-Starfield/sprites/main/egg.png";
     }
 
     public static (string, Embed) CreateLGLinkCodeSpriteEmbed(List<Pictocodes> lgcode)

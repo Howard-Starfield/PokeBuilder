@@ -12,9 +12,6 @@ namespace SysBot.Pokemon.WinForms
 {
     public class UpdateChecker
     {
-        private const string RepositoryOwner = "hexbyt3";
-        private const string RepositoryName = "PokeBot";
-
         // Reuse HttpClient to prevent socket exhaustion and memory leaks
         // HttpClient is thread-safe and should be reused
         private static readonly HttpClient _sharedClient = CreateGitHubClient();
@@ -134,7 +131,7 @@ namespace SysBot.Pokemon.WinForms
                 // Use shared HttpClient instance to prevent memory leaks
                 try
                 {
-                    string releasesUrl = $"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases/latest";
+                    const string releasesUrl = PokeBot.LatestReleaseApiUrl;
                     Console.WriteLine($"Fetching from URL: {releasesUrl}");
 
                     HttpResponseMessage response = await _sharedClient.GetAsync(releasesUrl);

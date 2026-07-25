@@ -1,7 +1,9 @@
 using PKHeX.Core;
 using PKHeX.Core.AutoMod;
 using System;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using static SysBot.Pokemon.TradeSettings;
 
@@ -248,73 +250,49 @@ public abstract class TradeExtensions<T> where T : PKM, new()
 
     public static string PokeImg(PKM pkm, bool canGmax, bool fullSize, ImageSize? preferredImageSize = null)
     {
-        bool md = false;
-        bool fd = false;
-        string[] baseLink;
+        _ = fullSize;
+        _ = preferredImageSize;
 
-        if (fullSize)
-        {
-            baseLink = "https://raw.githubusercontent.com/hexbyt3/HomeImages/master/512x512/poke_capture_0001_000_mf_n_00000000_f_n.png".Split('_');
-        }
-        else if (preferredImageSize.HasValue)
-        {
-            baseLink = preferredImageSize.Value switch
-            {
-                ImageSize.Size256x256 => "https://raw.githubusercontent.com/hexbyt3/HomeImages/master/256x256/poke_capture_0001_000_mf_n_00000000_f_n.png".Split('_'),
-                ImageSize.Size128x128 => "https://raw.githubusercontent.com/hexbyt3/HomeImages/master/128x128/poke_capture_0001_000_mf_n_00000000_f_n.png".Split('_'),
-                _ => "https://raw.githubusercontent.com/hexbyt3/HomeImages/master/256x256/poke_capture_0001_000_mf_n_00000000_f_n.png".Split('_'),
-            };
-        }
-        else
-        {
-            baseLink = "https://raw.githubusercontent.com/hexbyt3/HomeImages/master/256x256/poke_capture_0001_000_mf_n_00000000_f_n.png".Split('_');
-        }
+        string speciesName = SpeciesName.GetSpeciesName(
+            pkm.Species,
+            (int)LanguageID.English);
+        string formName = canGmax
+            ? "Gigantamax"
+            : ShowdownParsing.GetStringFromForm(
+                pkm.Form,
+                GameInfo.GetStrings("en"),
+                pkm.Species,
+                pkm.Context);
 
-        if (Enum.IsDefined(typeof(GenderDependent), pkm.Species) && !canGmax && pkm.Form is 0)
+        string spriteName = NormalizeSpriteName(speciesName);
+        if (!string.IsNullOrWhiteSpace(formName))
         {
-            if (pkm.Gender == 0 && pkm.Species != (int)Species.Torchic)
-                md = true;
-            else fd = true;
+            string normalizedForm = NormalizeSpriteName(formName);
+            if (normalizedForm == "gigantamax")
+                normalizedForm = "Gigantamax";
+            spriteName = $"{spriteName}-{normalizedForm}";
         }
 
-        int form = pkm.Species switch
-        {
-            (int)Species.Sinistea or (int)Species.Polteageist or (int)Species.Rockruff or (int)Species.Mothim => 0,
-            (int)Species.Alcremie when pkm.IsShiny || canGmax => 0,
-            _ => pkm.Form,
-        };
+        string folder = pkm.IsShiny ? "Shiny" : "Non-Shiny";
+        return $"https://raw.githubusercontent.com/Howard-Starfield/sprites/main/{folder}/{spriteName}.png";
+    }
 
-        if (pkm.Species is (ushort)Species.Sneasel)
-        {
-            if (pkm.Gender is 0)
-                md = true;
-            else fd = true;
-        }
+    private static string NormalizeSpriteName(string value)
+    {
+        string decomposed = value.Normalize(NormalizationForm.FormD);
+        string withoutDiacritics = string.Concat(
+            decomposed.Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark));
 
-        if (pkm.Species is (ushort)Species.Basculegion)
-        {
-            if (pkm.Gender is 0)
-            {
-                md = true;
-                pkm.Form = 0;
-            }
-            else
-            {
-                pkm.Form = 1;
-            }
+        string normalized = withoutDiacritics
+            .Replace("♀", "-f", StringComparison.Ordinal)
+            .Replace("♂", "-m", StringComparison.Ordinal)
+            .Replace('’', '\'')
+            .Replace(":", "_", StringComparison.Ordinal)
+            .Replace("%", string.Empty, StringComparison.Ordinal)
+            .Replace(' ', '-')
+            .ToLowerInvariant();
 
-            string s = pkm.IsShiny ? "r" : "n";
-            string g = md && pkm.Gender is not 1 ? "md" : "fd";
-            return "https://raw.githubusercontent.com/hexbyt3/HomeImages/master/256x256/poke_capture_0" + $"{pkm.Species}" + "_00" + $"{pkm.Form}" + "_" + $"{g}" + "_n_00000000_f_" + $"{s}" + ".png";
-        }
-
-        baseLink[2] = pkm.Species < 10 ? $"000{pkm.Species}" : pkm.Species < 100 && pkm.Species > 9 ? $"00{pkm.Species}" : pkm.Species >= 1000 ? $"{pkm.Species}" : $"0{pkm.Species}";
-        baseLink[3] = pkm.Form < 10 ? $"00{form}" : $"0{form}";
-        baseLink[4] = pkm.PersonalInfo.OnlyFemale ? "fo" : pkm.PersonalInfo.OnlyMale ? "mo" : pkm.PersonalInfo.Genderless ? "uk" : fd ? "fd" : md ? "md" : "mf";
-        baseLink[5] = canGmax ? "g" : "n";
-        baseLink[6] = "0000000" + ((pkm.Species == (int)Species.Alcremie && !canGmax) ? ((IFormArgument)pkm).FormArgument.ToString() : "0");
-        baseLink[8] = pkm.IsShiny ? "r.png" : "n.png";
-        return string.Join("_", baseLink);
+        return Regex.Replace(normalized, "-{2,}", "-").Trim('-');
     }
 
     public static bool ShinyLockCheck(ushort species, string form, string ball = "")

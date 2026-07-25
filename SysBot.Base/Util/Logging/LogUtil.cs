@@ -116,7 +116,7 @@ public static class LogUtil
 
     /// <summary>
     /// Sanitizes bot name for use in file paths
-    /// Creates folders like: logs/HeXbyt3-483256/, logs/A-Z-734959/, logs/System/
+    /// Creates folders like: logs/Trainer-483256/, logs/A-Z-734959/, logs/System/
     /// </summary>
     private static string SanitizeBotName(string botName)
     {
@@ -137,7 +137,7 @@ public static class LogUtil
             }
         }
 
-        // Keep the full identifier (e.g., "HeXbyt3-483256", "USB-1")
+        // Keep the full identifier (e.g., "Trainer-483256", "USB-1")
         // Just sanitize invalid file system characters
         var invalid = Path.GetInvalidFileNameChars();
         var sanitized = string.Join("_", botName.Split(invalid, StringSplitOptions.RemoveEmptyEntries));

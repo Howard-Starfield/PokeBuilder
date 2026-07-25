@@ -148,7 +148,7 @@ namespace SysBot.Pokemon.WinForms
 
             RTB_Logs.MaxLength = 2_000_000; // Limit to 2MB of text to prevent memory issues
             LoadControls();
-            Text = $"{(string.IsNullOrEmpty(Config.Hub.BotName) ? "GenPKM.com" : Config.Hub.BotName)} {PokeBot.Version} ({Config.Mode})";
+            Text = $"{(string.IsNullOrEmpty(Config.Hub.BotName) ? "PokeBuilder" : Config.Hub.BotName)} {PokeBot.Version} ({Config.Mode})";
             trayIcon.Text = Text;
             _ = Task.Run(BotMonitor);
             InitUtil.InitializeStubs(Config.Mode);
@@ -832,28 +832,8 @@ namespace SysBot.Pokemon.WinForms
 
         private async void Updater_Click(object sender, EventArgs e)
         {
-            var (updateAvailable, updateRequired, newVersion) = await UpdateChecker.CheckForUpdatesAsync();
+            var (updateAvailable, _, _) = await UpdateChecker.CheckForUpdatesAsync(forceShow: true);
             hasUpdate = updateAvailable;
-
-            if (!updateAvailable)
-            {
-                var result = MessageBox.Show(
-                    "You are on the latest version. Would you like to re-download the current version?",
-                    "Update Check",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question);
-
-                if (result == DialogResult.Yes)
-                {
-                    UpdateForm updateForm = new(updateRequired, newVersion, updateAvailable: false);
-                    updateForm.ShowDialog();
-                }
-            }
-            else
-            {
-                UpdateForm updateForm = new(updateRequired, newVersion, updateAvailable: true);
-                updateForm.ShowDialog();
-            }
         }
 
         private void SetButtonActiveState(Button button, bool isActive)
@@ -1166,7 +1146,7 @@ namespace SysBot.Pokemon.WinForms
             }
 
             RunningEnvironment = GetRunner(Config);
-            Text = $"{(string.IsNullOrEmpty(Config.Hub.BotName) ? "GenPKM.com" : Config.Hub.BotName)} {PokeBot.Version} ({Config.Mode})";
+            Text = $"{(string.IsNullOrEmpty(Config.Hub.BotName) ? "PokeBuilder" : Config.Hub.BotName)} {PokeBot.Version} ({Config.Mode})";
         }
 
         private void UpdateStatusIndicatorPulse()
