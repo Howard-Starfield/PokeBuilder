@@ -25,6 +25,7 @@ public static class QueueHelper<T> where T : PKM, new()
     private const uint MaxTradeCode = 9999_9999;
     private static readonly object QueueSubmissionLock = new();
     private static readonly Dictionary<ulong, DateTime> RecentQueueMessageIds = [];
+    private static readonly HttpClient ImageHttpClient = new();
 
     private static readonly Dictionary<int, string> MilestoneImages = new()
     {
@@ -646,18 +647,22 @@ public static class QueueHelper<T> where T : PKM, new()
     {
         string embedImageUrl;
         string speciesImageUrl;
+        var preferredImageSize = SysCord<T>.Runner.Config.Trade.TradeEmbedSettings.PreferredImageSize;
 
         if (pk.IsEgg)
         {
             string eggImageUrl = GetEggTypeImageUrl(pk);
             speciesImageUrl = TradeExtensions<T>.PokeImg(pk, false, true, null);
-            System.Drawing.Image combinedImage = await OverlaySpeciesOnEgg(eggImageUrl, speciesImageUrl);
+#pragma warning disable CA1416 // PokeBot Discord is run on Windows.
+            System.Drawing.Image combinedImage = await OverlaySpeciesOnEgg(eggImageUrl, speciesImageUrl, preferredImageSize);
             embedImageUrl = SaveImageLocally(combinedImage);
+            combinedImage.Dispose();
+#pragma warning restore CA1416
         }
         else
         {
             bool canGmax = pk is PK8 pk8 && pk8.CanGigantamax;
-            speciesImageUrl = TradeExtensions<T>.PokeImg(pk, canGmax, false, SysCord<T>.Runner.Config.Trade.TradeEmbedSettings.PreferredImageSize);
+            speciesImageUrl = TradeExtensions<T>.PokeImg(pk, canGmax, false);
             embedImageUrl = speciesImageUrl;
         }
 
@@ -694,10 +699,12 @@ public static class QueueHelper<T> where T : PKM, new()
         }
         else
         {
-            (System.Drawing.Image? finalCombinedImage, bool ballImageLoaded) = await OverlayBallOnSpecies(speciesImageUrl, ballImgUrl);
+            (System.Drawing.Image? finalCombinedImage, bool ballImageLoaded) =
+                await OverlayBallOnSpecies(speciesImageUrl, ballImgUrl, preferredImageSize);
             if (finalCombinedImage != null)
             {
-                embedImageUrl = SaveImageLocally(finalCombinedImage);
+                using (finalCombinedImage)
+                    embedImageUrl = SaveImageLocally(finalCombinedImage);
             }
             else
             {
@@ -715,15 +722,19 @@ public static class QueueHelper<T> where T : PKM, new()
         return (embedImageUrl, new DiscordColor(R, G, B));
     }
 
-    private static async Task<(System.Drawing.Image?, bool)> OverlayBallOnSpecies(string speciesImageUrl, string ballImageUrl)
+    private static async Task<(System.Drawing.Image?, bool)> OverlayBallOnSpecies(
+        string speciesImageUrl,
+        string ballImageUrl,
+        TradeSettings.ImageSize preferredImageSize)
     {
-        using var speciesImage = await LoadImageFromUrl(speciesImageUrl);
-        if (speciesImage == null)
+        using var sourceImage = await LoadImageFromUrl(speciesImageUrl);
+        if (sourceImage == null)
         {
             Console.WriteLine("Species image could not be loaded.");
             return (null, false);
         }
 
+        using var speciesImage = TradeEmbedImageSizer.Resize(sourceImage, preferredImageSize);
         var ballImage = await LoadImageFromUrl(ballImageUrl);
         if (ballImage == null)
         {
@@ -749,7 +760,10 @@ public static class QueueHelper<T> where T : PKM, new()
         }
     }
 
-    private static async Task<System.Drawing.Image> OverlaySpeciesOnEgg(string eggImageUrl, string speciesImageUrl)
+    private static async Task<System.Drawing.Image> OverlaySpeciesOnEgg(
+        string eggImageUrl,
+        string speciesImageUrl,
+        TradeSettings.ImageSize preferredImageSize)
     {
         System.Drawing.Image? eggImage = await LoadImageFromUrl(eggImageUrl);
         System.Drawing.Image? speciesImage = await LoadImageFromUrl(speciesImageUrl);
@@ -774,16 +788,17 @@ public static class QueueHelper<T> where T : PKM, new()
         speciesImage.Dispose();
         resizedSpeciesImage.Dispose();
 
-        double scale = Math.Min(128.0 / eggImage.Width, 128.0 / eggImage.Height);
+        int targetSize = TradeEmbedImageSizer.GetPixelSize(preferredImageSize);
+        double scale = Math.Min((double)targetSize / eggImage.Width, (double)targetSize / eggImage.Height);
         int newWidth = (int)(eggImage.Width * scale);
         int newHeight = (int)(eggImage.Height * scale);
 
-        Bitmap finalImage = new(128, 128);
+        Bitmap finalImage = new(targetSize, targetSize);
 
         using (Graphics g = Graphics.FromImage(finalImage))
         {
-            int x = (128 - newWidth) / 2;
-            int y = (128 - newHeight) / 2;
+            int x = (targetSize - newWidth) / 2;
+            int y = (targetSize - newHeight) / 2;
             g.DrawImage(eggImage, x, y, newWidth, newHeight);
         }
 
@@ -794,16 +809,15 @@ public static class QueueHelper<T> where T : PKM, new()
 
     private static async Task<System.Drawing.Image?> LoadImageFromUrl(string url)
     {
-        using HttpClient client = new();
-        HttpResponseMessage response = await client.GetAsync(url);
+        using HttpResponseMessage response = await ImageHttpClient.GetAsync(url);
         if (!response.IsSuccessStatusCode)
         {
             Console.WriteLine($"Failed to load image from {url}. Status code: {response.StatusCode}");
             return null;
         }
 
-        Stream stream = await response.Content.ReadAsStreamAsync();
-        if (stream == null || stream.Length == 0)
+        await using Stream stream = await response.Content.ReadAsStreamAsync();
+        if (stream.Length == 0)
         {
             Console.WriteLine($"No data or empty stream received from {url}");
             return null;
@@ -812,7 +826,8 @@ public static class QueueHelper<T> where T : PKM, new()
         try
         {
 #pragma warning disable CA1416 // Validate platform compatibility
-            return System.Drawing.Image.FromStream(stream);
+            using var source = System.Drawing.Image.FromStream(stream);
+            return new Bitmap(source);
 #pragma warning restore CA1416 // Validate platform compatibility
         }
         catch (ArgumentException ex)

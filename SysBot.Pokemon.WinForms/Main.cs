@@ -49,6 +49,7 @@ namespace SysBot.Pokemon.WinForms
         public static volatile bool IsUpdating = false;
         private System.Windows.Forms.Timer? _autoSaveTimer;
         private System.Windows.Forms.Timer? _logCleanupTimer;
+        private readonly object _configSaveLock = new();
         private bool _isFormLoading = true;
 
         private SearchManager _searchManager = null!;
@@ -336,6 +337,11 @@ namespace SysBot.Pokemon.WinForms
         {
             ConfigurationDropDownTheme.Register(typeof(ProgramConfig).Assembly);
             PG_Hub.SelectedObject = RunningEnvironment.Config;
+            PG_Hub.PropertyValueChanged += (_, _) =>
+            {
+                if (!_isFormLoading)
+                    SaveCurrentConfig();
+            };
             InitializeConfigurationCategories();
             ApplyConfigurationFontScale(Config.ConfigurationFontScalePercent);
             DarkModeHelper.ApplyDarkModeToControlTree(PG_Hub);
@@ -347,21 +353,7 @@ namespace SysBot.Pokemon.WinForms
                 Interval = 10_000,
                 Enabled = true
             };
-            _autoSaveTimer.Tick += (s, e) =>
-            {
-                // Run auto-save on background thread to avoid blocking UI
-                Task.Run(() =>
-                {
-                    try
-                    {
-                        SaveCurrentConfig();
-                    }
-                    catch (Exception ex)
-                    {
-                        LogUtil.LogError($"Auto-save failed: {ex.Message}", "Config");
-                    }
-                });
-            };
+            _autoSaveTimer.Tick += (_, _) => SaveCurrentConfig();
             var routines = ((PokeRoutineType[])Enum.GetValues(typeof(PokeRoutineType))).Where(z => RunningEnvironment.SupportsRoutine(z));
             var list = routines.Select(z => new ComboItem(z.ToString(), (int)z)).ToArray();
             CB_Routine.DisplayMember = nameof(ComboItem.Text);
@@ -690,8 +682,11 @@ namespace SysBot.Pokemon.WinForms
         {
             try
             {
-                var cfg = GetCurrentConfiguration();
-                ProgramConfigPersistence.SaveAtomic(cfg, ConfigLoader.ConfigPath, out _);
+                lock (_configSaveLock)
+                {
+                    var cfg = GetCurrentConfiguration();
+                    ProgramConfigPersistence.SaveAtomic(cfg, ConfigLoader.ConfigPath, out _);
+                }
             }
             catch (Exception ex)
             {

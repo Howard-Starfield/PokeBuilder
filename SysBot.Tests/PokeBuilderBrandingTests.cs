@@ -1,6 +1,7 @@
 using FluentAssertions;
 using PKHeX.Core;
 using SysBot.Pokemon.Helpers;
+using System.Net;
 using Xunit;
 
 namespace SysBot.Tests;
@@ -57,5 +58,26 @@ public sealed class PokeBuilderBrandingTests
 
         url.Should().Be(
             "https://raw.githubusercontent.com/Howard-Starfield/sprites/main/Non-Shiny/charizard-Gigantamax.png");
+    }
+
+    [Fact]
+    public void MissingLatestRelease_IsNotClassifiedAsInternetFailure()
+    {
+        PokeBotReleaseCheck.ClassifyHttpStatus(HttpStatusCode.NotFound)
+            .Should().Be(PokeBotReleaseCheckStatus.NoPublishedRelease);
+        PokeBotReleaseCheck.GetFailureMessage(PokeBotReleaseCheckStatus.NoPublishedRelease)
+            .Should().Contain("does not have a published GitHub release");
+        PokeBotReleaseCheck.ShouldRetry(HttpStatusCode.NotFound).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public void TransientGitHubFailures_AreRetryable(HttpStatusCode statusCode)
+    {
+        PokeBotReleaseCheck.ClassifyHttpStatus(statusCode)
+            .Should().Be(PokeBotReleaseCheckStatus.ApiError);
+        PokeBotReleaseCheck.ShouldRetry(statusCode).Should().BeTrue();
     }
 }

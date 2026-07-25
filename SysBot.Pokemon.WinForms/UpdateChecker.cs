@@ -3,6 +3,7 @@ using SysBot.Pokemon.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading.Tasks;
@@ -30,13 +31,18 @@ namespace SysBot.Pokemon.WinForms
         {
             try
             {
-                ReleaseInfo? latestRelease = await FetchLatestReleaseAsync();
+                ReleaseFetchResult fetchResult = await FetchLatestReleaseAsync();
+                ReleaseInfo? latestRelease = fetchResult.Release;
                 if (latestRelease == null)
                 {
                     if (forceShow)
                     {
-                        MessageBox.Show("Failed to fetch release information. Please check your internet connection.",
-                            "Update Check Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        bool noRelease = fetchResult.Status == PokeBotReleaseCheckStatus.NoPublishedRelease;
+                        MessageBox.Show(
+                            PokeBotReleaseCheck.GetFailureMessage(fetchResult.Status, fetchResult.HttpStatusCode),
+                            noRelease ? "No Published Release" : "Update Check Failed",
+                            MessageBoxButtons.OK,
+                            noRelease ? MessageBoxIcon.Information : MessageBoxIcon.Error);
                     }
                     return (false, false, string.Empty);
                 }
@@ -68,8 +74,9 @@ namespace SysBot.Pokemon.WinForms
         {
             try
             {
-                ReleaseInfo? latestRelease = await FetchLatestReleaseAsync();
-                return latestRelease?.Body ?? "Failed to fetch the latest release information.";
+                ReleaseFetchResult fetchResult = await FetchLatestReleaseAsync();
+                return fetchResult.Release?.Body ??
+                    PokeBotReleaseCheck.GetFailureMessage(fetchResult.Status, fetchResult.HttpStatusCode);
             }
             catch (Exception ex)
             {
@@ -81,7 +88,7 @@ namespace SysBot.Pokemon.WinForms
         {
             try
             {
-                ReleaseInfo? latestRelease = await FetchLatestReleaseAsync();
+                ReleaseInfo? latestRelease = (await FetchLatestReleaseAsync()).Release;
                 if (latestRelease?.Assets == null || !latestRelease.Assets.Any())
                 {
                     Console.WriteLine("No assets found in the release");
@@ -114,10 +121,12 @@ namespace SysBot.Pokemon.WinForms
             }
         }
 
-        private static async Task<ReleaseInfo?> FetchLatestReleaseAsync()
+        private static async Task<ReleaseFetchResult> FetchLatestReleaseAsync()
         {
             const int maxRetries = 3;
             Exception? lastException = null;
+            PokeBotReleaseCheckStatus lastStatus = PokeBotReleaseCheckStatus.NetworkError;
+            HttpStatusCode? lastHttpStatusCode = null;
 
             for (int retry = 0; retry < maxRetries; retry++)
             {
@@ -134,40 +143,53 @@ namespace SysBot.Pokemon.WinForms
                     const string releasesUrl = PokeBot.LatestReleaseApiUrl;
                     Console.WriteLine($"Fetching from URL: {releasesUrl}");
 
-                    HttpResponseMessage response = await _sharedClient.GetAsync(releasesUrl);
+                    using HttpResponseMessage response = await _sharedClient.GetAsync(releasesUrl);
                     string responseContent = await response.Content.ReadAsStringAsync();
 
                     if (!response.IsSuccessStatusCode)
                     {
                         Console.WriteLine($"GitHub API Error: {response.StatusCode} - {responseContent}");
+                        PokeBotReleaseCheckStatus status = PokeBotReleaseCheck.ClassifyHttpStatus(response.StatusCode);
+                        if (status == PokeBotReleaseCheckStatus.NoPublishedRelease)
+                            return new(null, status, response.StatusCode);
+
+                        lastStatus = status;
+                        lastHttpStatusCode = response.StatusCode;
                         lastException = new HttpRequestException($"GitHub API returned {response.StatusCode}");
-                        continue; // Try again
+                        if (PokeBotReleaseCheck.ShouldRetry(response.StatusCode))
+                            continue;
+
+                        return new(null, status, response.StatusCode);
                     }
 
                     var releaseInfo = JsonConvert.DeserializeObject<ReleaseInfo>(responseContent);
                     if (releaseInfo == null)
                     {
                         Console.WriteLine("Failed to deserialize release info");
+                        lastStatus = PokeBotReleaseCheckStatus.InvalidResponse;
                         lastException = new InvalidOperationException("Failed to deserialize release info");
                         continue; // Try again
                     }
 
                     Console.WriteLine($"Successfully fetched release info. Tag: {releaseInfo.TagName}");
-                    return releaseInfo;
+                    return new(releaseInfo, PokeBotReleaseCheckStatus.Success, response.StatusCode);
                 }
                 catch (TaskCanceledException ex)
                 {
                     Console.WriteLine($"Request timed out on attempt {retry + 1}: {ex.Message}");
+                    lastStatus = PokeBotReleaseCheckStatus.NetworkError;
                     lastException = ex;
                 }
                 catch (HttpRequestException ex)
                 {
                     Console.WriteLine($"Network error on attempt {retry + 1}: {ex.Message}");
+                    lastStatus = PokeBotReleaseCheckStatus.NetworkError;
                     lastException = ex;
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error on attempt {retry + 1}: {ex.Message}");
+                    lastStatus = PokeBotReleaseCheckStatus.InvalidResponse;
                     lastException = ex;
                 }
             }
@@ -177,7 +199,7 @@ namespace SysBot.Pokemon.WinForms
             if (lastException != null)
                 Console.WriteLine($"Last error: {lastException.Message}");
 
-            return null;
+            return new(null, lastStatus, lastHttpStatusCode);
         }
 
         private static bool IsUpdateRequired(string changelogBody)
@@ -212,5 +234,10 @@ namespace SysBot.Pokemon.WinForms
             [JsonProperty("browser_download_url")]
             public string? BrowserDownloadUrl { get; set; }
         }
+
+        private sealed record ReleaseFetchResult(
+            ReleaseInfo? Release,
+            PokeBotReleaseCheckStatus Status,
+            HttpStatusCode? HttpStatusCode);
     }
 }

@@ -82,7 +82,7 @@ public class ProgramConfigPersistenceTests
         try
         {
             var configPath = Path.Combine(dir, "config.json");
-            File.WriteAllText(configPath, "{\"ConfigVersion\":0,\"Mode\":4,\"Bots\":[],\"Hub\":{\"Trade\":{\"TradeConfiguration\":{\"TradeWaitTime\":88},\"TradeWaitTime\":77,\"MaxPkmsPerTrade\":3,\"AllowBatchTrades\":false,\"TradeAnimationMaxDelaySeconds\":61,\"UseEmbeds\":false,\"ShowIVs\":false,\"EventsFolder\":\"old-events\",\"BattleReadyPKMFolder\":\"old-battle-ready\",\"CompletedTrades\":42,\"EmitCountsOnStatusCheck\":true}}}");
+            File.WriteAllText(configPath, "{\"ConfigVersion\":0,\"Mode\":4,\"Bots\":[],\"Hub\":{\"Trade\":{\"TradeConfiguration\":{\"TradeWaitTime\":88},\"TradeWaitTime\":77,\"MaxPkmsPerTrade\":3,\"AllowBatchTrades\":false,\"TradeAnimationMaxDelaySeconds\":61,\"UseEmbeds\":false,\"PreferredImageSize\":\"Size128x128\",\"ShowIVs\":false,\"EventsFolder\":\"old-events\",\"BattleReadyPKMFolder\":\"old-battle-ready\",\"CompletedTrades\":42,\"EmitCountsOnStatusCheck\":true}}}");
 
             var result = ProgramConfigPersistence.LoadOrCreate(configPath);
 
@@ -93,11 +93,36 @@ public class ProgramConfigPersistenceTests
             GetLegalitySetting<bool>(result.Config, "AllowBatchTrades").Should().BeFalse("the new Legality value must win during load");
             result.Config.Hub.Trade.TradeConfiguration.TradeAnimationMaxDelaySeconds.Should().Be(61);
             result.Config.Hub.Trade.TradeEmbedSettings.UseEmbeds.Should().BeFalse();
+            result.Config.Hub.Trade.TradeEmbedSettings.PreferredImageSize.Should().Be(TradeSettings.ImageSize.Size128x128);
             result.Config.Hub.Trade.TradeEmbedSettings.ShowIVs.Should().BeFalse();
             result.Config.Hub.Trade.RequestFolderSettings.EventsFolder.Should().Be("old-events");
             result.Config.Hub.Trade.RequestFolderSettings.BattleReadyPKMFolder.Should().Be("old-battle-ready");
             result.Config.Hub.Trade.CountStatsSettings.CompletedTrades.Should().Be(42);
             result.Config.Hub.Trade.CountStatsSettings.EmitCountsOnStatusCheck.Should().BeTrue();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LoadOrCreate_DisablingEmbedsDoesNotEraseSavedEmbedChoices()
+    {
+        var dir = CreateTempDirectory();
+        try
+        {
+            var configPath = Path.Combine(dir, "config.json");
+            File.WriteAllText(
+                configPath,
+                "{\"ConfigVersion\":1,\"Mode\":4,\"Bots\":[],\"Hub\":{\"Trade\":{\"TradeEmbedSettings\":{\"PreferredImageSize\":1,\"MoveTypeEmojis\":true,\"ShowIVs\":true,\"UseEmbeds\":false}}}}");
+
+            var result = ProgramConfigPersistence.LoadOrCreate(configPath);
+
+            result.Config.Hub.Trade.TradeEmbedSettings.UseEmbeds.Should().BeFalse();
+            result.Config.Hub.Trade.TradeEmbedSettings.PreferredImageSize.Should().Be(TradeSettings.ImageSize.Size128x128);
+            result.Config.Hub.Trade.TradeEmbedSettings.MoveTypeEmojis.Should().BeTrue();
+            result.Config.Hub.Trade.TradeEmbedSettings.ShowIVs.Should().BeTrue();
         }
         finally
         {

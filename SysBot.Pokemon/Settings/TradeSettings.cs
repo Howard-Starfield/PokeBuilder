@@ -154,27 +154,7 @@ public class TradeSettings : IBotStateSettings, ICountSettings
         public bool UseEmbeds
         {
             get => _useEmbeds;
-            set
-            {
-                _useEmbeds = value;
-                OnUseEmbedsChanged();
-            }
-        }
-
-        private void OnUseEmbedsChanged()
-        {
-            if (!_useEmbeds)
-            {
-                PreferredImageSize = ImageSize.Size256x256;
-                MoveTypeEmojis = false;
-                ShowScale = false;
-                ShowTeraType = false;
-                ShowLevel = false;
-                ShowMetDate = false;
-                ShowAbility = false;
-                ShowNature = false;
-                ShowIVs = false;
-            }
+            set => _useEmbeds = value;
         }
 
         [Category(EmbedSettings), Description("Preferred Species Image Size for Embeds."), DisplayName("Species Image Size")]
