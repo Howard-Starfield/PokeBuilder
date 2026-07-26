@@ -47,14 +47,27 @@ namespace SysBot.Pokemon.WinForms
                     return (false, false, string.Empty);
                 }
 
-                bool updateAvailable = latestRelease.TagName != PokeBot.Version;
+                bool updateAvailable = PokeBotReleaseCheck.IsNewerVersion(
+                    latestRelease.TagName,
+                    PokeBot.Version);
                 bool updateRequired = !latestRelease.Prerelease && IsUpdateRequired(latestRelease.Body ?? string.Empty);
                 string newVersion = latestRelease.TagName ?? string.Empty;
 
                 if (forceShow)
                 {
-                    var updateForm = new UpdateForm(updateRequired, newVersion, updateAvailable);
-                    updateForm.ShowDialog();
+                    if (updateAvailable)
+                    {
+                        var updateForm = new UpdateForm(updateRequired, newVersion, updateAvailable);
+                        updateForm.ShowDialog();
+                    }
+                    else
+                    {
+                        MessageBox.Show(
+                            $"PokeBuilder {PokeBot.Version} is already the latest release.",
+                            "No Update Available",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+                    }
                 }
 
                 return (updateAvailable, updateRequired, newVersion);

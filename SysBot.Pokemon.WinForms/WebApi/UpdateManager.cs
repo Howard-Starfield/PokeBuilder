@@ -400,7 +400,7 @@ public static class UpdateManager
                 versionCts?.Dispose();
             }
             
-            if (!forceUpdate && !updateAvailable)
+            if (!PokeBotReleaseCheck.ShouldInstallUpdate(updateAvailable, forceUpdate))
             {
                 CompleteUpdate(state, true, "No updates available");
                 return;
@@ -1120,14 +1120,26 @@ public static class UpdateManager
                         await File.WriteAllTextAsync(safeFlagPath, flagData, cancellationToken);
                     }
 
-                    await Task.Run(() =>
+                    if (mainForm == null)
+                        throw new InvalidOperationException("The main form is unavailable for the master update.");
+
+                    var updateStarted = new TaskCompletionSource<bool>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    mainForm.BeginInvoke((MethodInvoker)(async () =>
                     {
-                        mainForm?.BeginInvoke((MethodInvoker)(() =>
+                        try
                         {
                             var updateForm = new UpdateForm(false, targetVersion, true);
-                            updateForm.PerformUpdate();
-                        }));
-                    }, cancellationToken);
+                            updateStarted.TrySetResult(await updateForm.PerformUpdateAsync());
+                        }
+                        catch (Exception ex)
+                        {
+                            updateStarted.TrySetException(ex);
+                        }
+                    }));
+
+                    if (!await updateStarted.Task.WaitAsync(cancellationToken))
+                        throw new InvalidOperationException("The master update could not start.");
 
                     // Application will restart
                     return;

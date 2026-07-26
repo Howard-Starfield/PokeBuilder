@@ -1510,6 +1510,7 @@ class UpdateManager {
     constructor(app) {
         this.app = app;
         this.checkInterval = null;
+        this.updateAvailable = false;
     }
 
     /**
@@ -1595,11 +1596,29 @@ class UpdateManager {
 
             document.getElementById('new-version').textContent = updateInfo.version;
             document.getElementById('changelog-content').textContent = updateInfo.changelog;
+            this.setUpdateAvailability(updateInfo.available === true);
 
         } catch (error) {
             console.error('Error checking updates:', error);
             document.getElementById('new-version').textContent = 'Latest';
             document.getElementById('changelog-content').textContent = 'Unable to fetch update information.';
+            this.setUpdateAvailability(false);
+        }
+    }
+
+    setUpdateAvailability(available) {
+        this.updateAvailable = available;
+        const confirmButton = document.getElementById('confirm-update');
+        if (confirmButton) {
+            confirmButton.disabled = !available;
+            confirmButton.textContent = available ? 'Update Now' : 'Up to Date';
+        }
+
+        const availabilityMessage = document.getElementById('update-availability-message');
+        if (availabilityMessage) {
+            availabilityMessage.textContent = available
+                ? 'A newer release is available. All instances will be updated and restarted.'
+                : 'This installation is already running the latest release.';
         }
     }
 
@@ -1607,6 +1626,12 @@ class UpdateManager {
      * Confirm and execute update
      */
     async confirmUpdate() {
+        if (!this.updateAvailable) {
+            this.closeModal('update');
+            this.app.toastManager.info('PokeBuilder is already up to date.');
+            return;
+        }
+
         this.closeModal('update');
         this.showModal('progress');
         
@@ -1616,7 +1641,7 @@ class UpdateManager {
         this.app.state.set('updateState', updateState);
 
         try {
-            const response = await this.app.api.post(this.app.api.endpoints.updateAll, { force: true });
+            const response = await this.app.api.post(this.app.api.endpoints.updateAll, { force: false });
 
             if (!response.ok && !response.sessionId) {
                 throw new Error('Failed to start update');

@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using SysBot.Base;
 
 namespace SysBot.Pokemon.WinForms
 {
@@ -107,24 +108,48 @@ namespace SysBot.Pokemon.WinForms
             }
         }
 
-        public async void PerformUpdate()
+        public async Task<bool> PerformUpdateAsync(bool showErrors = false)
         {
             buttonDownload.Enabled = false;
             buttonDownload.Text = "Downloading...";
+            bool installStarted = false;
 
             try
             {
                 string? downloadUrl = await UpdateChecker.FetchDownloadUrlAsync();
-                if (!string.IsNullOrWhiteSpace(downloadUrl))
+                if (string.IsNullOrWhiteSpace(downloadUrl))
+                    throw new InvalidOperationException("The latest release does not contain a downloadable PokeBot executable.");
+
+                string downloadedFilePath = await StartDownloadProcessAsync(downloadUrl);
+                InstallUpdate(downloadedFilePath);
+                installStarted = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogUtil.LogError($"Update failed before restart: {ex}", "Update");
+                if (showErrors)
                 {
-                    string downloadedFilePath = await StartDownloadProcessAsync(downloadUrl);
-                    if (!string.IsNullOrEmpty(downloadedFilePath))
-                    {
-                        InstallUpdate(downloadedFilePath);
-                    }
+                    MessageBox.Show(
+                        $"Update failed: {ex.Message}",
+                        "Update Error",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+
+                return false;
+            }
+            finally
+            {
+                if (!installStarted)
+                {
+                    Main.IsUpdating = false;
+                    buttonDownload.Enabled = true;
+                    buttonDownload.Text = isUpdateAvailable
+                        ? "Download Update"
+                        : "Re-Download Latest Version";
                 }
             }
-            catch { }
         }
 
         private async Task FetchAndDisplayChangelog()
@@ -135,35 +160,7 @@ namespace SysBot.Pokemon.WinForms
 
         private async void ButtonDownload_Click(object? sender, EventArgs? e)
         {
-            buttonDownload.Enabled = false;
-            buttonDownload.Text = "Downloading...";
-
-            try
-            {
-                string? downloadUrl = await UpdateChecker.FetchDownloadUrlAsync();
-                if (!string.IsNullOrWhiteSpace(downloadUrl))
-                {
-                    string downloadedFilePath = await StartDownloadProcessAsync(downloadUrl);
-                    if (!string.IsNullOrEmpty(downloadedFilePath))
-                    {
-                        InstallUpdate(downloadedFilePath);
-                    }
-                }
-                else
-                {
-                    MessageBox.Show("Failed to fetch the download URL. Please check your internet connection and try again.",
-                        "Download Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Update failed: {ex.Message}", "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                buttonDownload.Enabled = true;
-                buttonDownload.Text = isUpdateAvailable ? "Download Update" : "Re-Download Latest Version";
-            }
+            await PerformUpdateAsync(showErrors: true);
         }
 
         private static async Task<string> StartDownloadProcessAsync(string downloadUrl)
@@ -255,58 +252,71 @@ namespace SysBot.Pokemon.WinForms
 
         private static void InstallUpdate(string downloadedFilePath)
         {
-            try
+            string currentExePath = Application.ExecutablePath;
+            string applicationDirectory = Path.GetDirectoryName(currentExePath) ?? "";
+            string executableName = Path.GetFileName(currentExePath);
+            string backupPath = Path.Combine(applicationDirectory, $"{executableName}.backup");
+            string updateErrorPath = Path.Combine(applicationDirectory, "update_error.log");
+            string configPath = Path.GetFullPath(ConfigLoader.ConfigPath);
+
+            // Use a unique script and environment variables so concurrent
+            // instances cannot overwrite one another's updater or arguments.
+            string batchPath = Path.Combine(
+                Path.GetTempPath(),
+                $"UpdateSysBot_{Guid.NewGuid():N}.bat");
+            const string batchContent = """
+                @echo off
+                setlocal DisableDelayedExpansion
+                timeout /t 2 /nobreak >nul
+                if exist "%POKEBOT_UPDATE_ERROR%" del /f /q "%POKEBOT_UPDATE_ERROR%"
+
+                if exist "%POKEBOT_CURRENT_EXE%" (
+                    if exist "%POKEBOT_BACKUP_EXE%" del /f /q "%POKEBOT_BACKUP_EXE%"
+                    move /y "%POKEBOT_CURRENT_EXE%" "%POKEBOT_BACKUP_EXE%" >nul
+                    if errorlevel 1 goto update_failed
+                )
+
+                move /y "%POKEBOT_DOWNLOADED_EXE%" "%POKEBOT_CURRENT_EXE%" >nul
+                if errorlevel 1 goto restore_backup
+
+                start "" "%POKEBOT_CURRENT_EXE%" "%POKEBOT_CONFIG_PATH%"
+                goto cleanup
+
+                :restore_backup
+                if not exist "%POKEBOT_CURRENT_EXE%" if exist "%POKEBOT_BACKUP_EXE%" (
+                    move /y "%POKEBOT_BACKUP_EXE%" "%POKEBOT_CURRENT_EXE%" >nul
+                )
+
+                :update_failed
+                >"%POKEBOT_UPDATE_ERROR%" echo The update could not replace PokeBot.exe. The previous executable was restored when possible.
+                if exist "%POKEBOT_CURRENT_EXE%" start "" "%POKEBOT_CURRENT_EXE%" "%POKEBOT_CONFIG_PATH%"
+
+                :cleanup
+                del /f /q "%~f0"
+                """;
+
+            File.WriteAllText(batchPath, batchContent);
+
+            ProcessStartInfo startInfo = new()
             {
-                string currentExePath = Application.ExecutablePath;
-                string applicationDirectory = Path.GetDirectoryName(currentExePath) ?? "";
-                string executableName = Path.GetFileName(currentExePath);
-                string backupPath = Path.Combine(applicationDirectory, $"{executableName}.backup");
+                FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+            startInfo.ArgumentList.Add("/d");
+            startInfo.ArgumentList.Add("/c");
+            startInfo.ArgumentList.Add(batchPath);
+            startInfo.Environment["POKEBOT_CURRENT_EXE"] = currentExePath;
+            startInfo.Environment["POKEBOT_BACKUP_EXE"] = backupPath;
+            startInfo.Environment["POKEBOT_DOWNLOADED_EXE"] = downloadedFilePath;
+            startInfo.Environment["POKEBOT_CONFIG_PATH"] = configPath;
+            startInfo.Environment["POKEBOT_UPDATE_ERROR"] = updateErrorPath;
 
-                // Create batch file for update process
-                string batchPath = Path.Combine(Path.GetTempPath(), "UpdateSysBot.bat");
-                string batchContent = @$"
-                                            @echo off
-                                            timeout /t 2 /nobreak >nul
-                                            echo Updating SysBot...
+            _ = Process.Start(startInfo) ??
+                throw new InvalidOperationException("Windows could not start the update helper.");
 
-                                            rem Backup current version
-                                            if exist ""{currentExePath}"" (
-                                                if exist ""{backupPath}"" (
-                                                    del ""{backupPath}""
-                                                )
-                                                move ""{currentExePath}"" ""{backupPath}""
-                                            )
-
-                                            rem Install new version
-                                            move ""{downloadedFilePath}"" ""{currentExePath}""
-
-                                            rem Start new version
-                                            start """" ""{currentExePath}""
-
-                                            rem Clean up
-                                            del ""%~f0""
-                                            ";
-
-                File.WriteAllText(batchPath, batchContent);
-
-                // Start the update batch file
-                ProcessStartInfo startInfo = new ProcessStartInfo
-                {
-                    FileName = batchPath,
-                    CreateNoWindow = true,
-                    UseShellExecute = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
-
-                Process.Start(startInfo);
-
-                // Exit the current instance
-                Application.Exit();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to install update: {ex.Message}", "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
+            Application.Exit();
         }
     }
 }

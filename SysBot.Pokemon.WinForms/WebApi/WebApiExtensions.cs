@@ -530,10 +530,19 @@ public static class WebApiExtensions
                 try
                 {
                     var (updateAvailable, _, newVersion) = await UpdateChecker.CheckForUpdatesAsync(false);
-                    if (updateAvailable || true) // Always allow update when triggered remotely
+                    if (PokeBotReleaseCheck.ShouldInstallUpdate(updateAvailable, forceRequested: true))
                     {
                         var updateForm = new UpdateForm(false, newVersion ?? "latest", true);
-                        updateForm.PerformUpdate();
+                        bool updateStarted = await updateForm.PerformUpdateAsync();
+                        if (!updateStarted)
+                        {
+                            lock (_updateLock) { _updateInProgress = false; }
+                        }
+                    }
+                    else
+                    {
+                        LogUtil.LogInfo("WebApiExtensions", "Remote update skipped because this instance is already current");
+                        lock (_updateLock) { _updateInProgress = false; }
                     }
                 }
                 catch (Exception ex)

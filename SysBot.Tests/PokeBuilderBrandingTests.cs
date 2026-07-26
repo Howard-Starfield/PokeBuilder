@@ -80,4 +80,50 @@ public sealed class PokeBuilderBrandingTests
             .Should().Be(PokeBotReleaseCheckStatus.ApiError);
         PokeBotReleaseCheck.ShouldRetry(statusCode).Should().BeTrue();
     }
+
+    [Theory]
+    [InlineData("v1.3.7", "v1.3.8", true)]
+    [InlineData("v1.3.8", "v1.3.8", false)]
+    [InlineData("1.3.8", "v1.3.8", false)]
+    [InlineData("v1.3.8.0", "v1.3.8", false)]
+    [InlineData("v1.3.9", "v1.3.8", false)]
+    [InlineData("development", "v1.3.8", false)]
+    [InlineData("v1.3.8", "not-a-version", false)]
+    public void ReleaseVersionComparison_OnlyOffersStrictlyNewerVersions(
+        string currentVersion,
+        string repositoryVersion,
+        bool expected)
+    {
+        PokeBotReleaseCheck.IsNewerVersion(repositoryVersion, currentVersion)
+            .Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public void UpdatePolicy_NeverReinstallsTheCurrentRelease(
+        bool updateAvailable,
+        bool forceRequested,
+        bool expected)
+    {
+        PokeBotReleaseCheck.ShouldInstallUpdate(updateAvailable, forceRequested)
+            .Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(
+        new[] { "PokeBot.exe", @"D:\Bots\primary settings.json" },
+        @"D:\Bots\primary settings.json")]
+    [InlineData(
+        new[] { "PokeBot.exe", "--diagnostic", @"D:\Bots\primary settings.JSON" },
+        @"D:\Bots\primary settings.JSON")]
+    [InlineData(new[] { "PokeBot.exe", "--diagnostic" }, null)]
+    public void LaunchArguments_PreserveTheSelectedJsonConfiguration(
+        string[] arguments,
+        string? expected)
+    {
+        PokeBotLaunchArguments.FindConfigPath(arguments).Should().Be(expected);
+    }
 }

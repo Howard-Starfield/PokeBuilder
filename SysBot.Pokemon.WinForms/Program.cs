@@ -1,4 +1,5 @@
 using PKHeX.Core;
+using SysBot.Pokemon.Helpers;
 using SysBot.Pokemon.Z3;
 using System;
 using System.Windows.Forms;
@@ -16,8 +17,7 @@ internal static class Program
 #if NETCOREAPP
         Application.SetHighDpiMode(HighDpiMode.SystemAware);
 #endif
-        var cmd = Environment.GetCommandLineArgs();
-        var cfg = Array.Find(cmd, z => z.EndsWith(".json"));
+        var cfg = PokeBotLaunchArguments.FindConfigPath(Environment.GetCommandLineArgs());
         if (cfg != null)
             ConfigLoader.ConfigPath = cfg;
 
