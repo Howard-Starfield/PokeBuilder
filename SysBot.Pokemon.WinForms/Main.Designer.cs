@@ -90,6 +90,8 @@ namespace SysBot.Pokemon.WinForms
             btnConfigFontIncrease = new Button();
             btnConfigFontReset = new Button();
             configContentSplit = new SplitContainer();
+            configSettingsTree = new ConfigurationSettingsTree();
+            pgContainer = new Panel();
             configCategoryTitle = new Label();
             configCategorySubtitle = new Label();
             configCategoryList = new ListBox();
@@ -461,7 +463,7 @@ namespace SysBot.Pokemon.WinForms
 
             // Configuration toolbar - dark Poké Ball theme
             configToolbarPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            configToolbarPanel.BackColor = Color.FromArgb(23, 29, 37);
+            configToolbarPanel.BackColor = ConfigurationTheme.Surface;
             configToolbarPanel.Controls.Add(configTextSizeControlsPanel);
             configToolbarPanel.Controls.Add(configToolbarSubtitle);
             configToolbarPanel.Controls.Add(configToolbarTitle);
@@ -483,14 +485,14 @@ namespace SysBot.Pokemon.WinForms
 
             configToolbarTitle.AutoSize = true;
             configToolbarTitle.Font = new Font("Segoe UI Semibold", 10.5F);
-            configToolbarTitle.ForeColor = Color.FromArgb(244, 246, 248);
+            configToolbarTitle.ForeColor = ConfigurationTheme.TextPrimary;
             configToolbarTitle.Location = new Point(54, 9);
             configToolbarTitle.Name = "configToolbarTitle";
             configToolbarTitle.Text = "Configuration text";
 
             configToolbarSubtitle.AutoSize = true;
             configToolbarSubtitle.Font = new Font("Segoe UI", 8.5F);
-            configToolbarSubtitle.ForeColor = Color.FromArgb(158, 172, 189);
+            configToolbarSubtitle.ForeColor = ConfigurationTheme.TextMuted;
             configToolbarSubtitle.Location = new Point(54, 31);
             configToolbarSubtitle.Name = "configToolbarSubtitle";
             configToolbarSubtitle.Text = "Readable settings, saved to config.json";
@@ -511,7 +513,7 @@ namespace SysBot.Pokemon.WinForms
 
             configTextSizeCaption.AutoSize = false;
             configTextSizeCaption.Font = new Font("Segoe UI Semibold", 9F);
-            configTextSizeCaption.ForeColor = Color.FromArgb(214, 220, 226);
+            configTextSizeCaption.ForeColor = ConfigurationTheme.TextSecondary;
             configTextSizeCaption.Margin = new Padding(0, 0, 8, 0);
             configTextSizeCaption.Name = "configTextSizeCaption";
             configTextSizeCaption.Size = new Size(65, 30);
@@ -523,7 +525,7 @@ namespace SysBot.Pokemon.WinForms
             btnConfigFontDecrease.Click += ConfigFontDecrease_Click;
 
             lblConfigFontScale.Font = new Font("Segoe UI Semibold", 9.5F);
-            lblConfigFontScale.ForeColor = Color.FromArgb(244, 246, 248);
+            lblConfigFontScale.ForeColor = ConfigurationTheme.TextPrimary;
             lblConfigFontScale.Margin = new Padding(4, 0, 4, 0);
             lblConfigFontScale.Name = "lblConfigFontScale";
             lblConfigFontScale.Size = new Size(52, 30);
@@ -544,19 +546,22 @@ namespace SysBot.Pokemon.WinForms
             configToolTip.SetToolTip(btnConfigFontIncrease, "Increase configuration text size");
             configToolTip.SetToolTip(btnConfigFontReset, "Reset configuration text size to 125%");
 
-            // Configuration content - real category navigation plus the existing live PropertyGrid
+            // Configuration content - category navigation with a descriptor-backed
+            // modern surface and the live PropertyGrid retained as a complete fallback.
             configContentSplit.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            configContentSplit.BackColor = Color.FromArgb(48, 60, 73);
+            configContentSplit.BackColor = ConfigurationTheme.Border;
             configContentSplit.FixedPanel = FixedPanel.Panel1;
             configContentSplit.Location = new Point(10, 78);
             configContentSplit.Name = "configContentSplit";
-            configContentSplit.Panel1.BackColor = Color.FromArgb(23, 29, 37);
+            configContentSplit.Panel1.BackColor = ConfigurationTheme.Surface;
             configContentSplit.Panel1.Controls.Add(configCategoryList);
             configContentSplit.Panel1.Controls.Add(configCategorySubtitle);
             configContentSplit.Panel1.Controls.Add(configCategoryTitle);
             configContentSplit.Panel1MinSize = 190;
-            configContentSplit.Panel2.BackColor = Color.FromArgb(29, 38, 49);
+            configContentSplit.Panel2.BackColor = ConfigurationTheme.Canvas;
             configContentSplit.Panel2.Controls.Add(configSectionHeaderPanel);
+            configContentSplit.Panel2.Controls.Add(configSettingsTree);
+            configContentSplit.Panel2.Controls.Add(pgContainer);
             configContentSplit.Panel2.Padding = new Padding(0, 72, 0, 0);
             configContentSplit.Panel2MinSize = 320;
             configContentSplit.Size = new Size(840, 452);
@@ -566,36 +571,39 @@ namespace SysBot.Pokemon.WinForms
 
             configCategoryTitle.AutoSize = true;
             configCategoryTitle.Font = new Font("Segoe UI Semibold", 12F);
-            configCategoryTitle.ForeColor = Color.FromArgb(244, 246, 248);
+            configCategoryTitle.ForeColor = ConfigurationTheme.TextPrimary;
             configCategoryTitle.Location = new Point(16, 14);
             configCategoryTitle.Name = "configCategoryTitle";
             configCategoryTitle.Text = "Settings";
 
             configCategorySubtitle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             configCategorySubtitle.Font = new Font("Segoe UI", 9F);
-            configCategorySubtitle.ForeColor = Color.FromArgb(158, 172, 189);
+            configCategorySubtitle.ForeColor = ConfigurationTheme.TextMuted;
             configCategorySubtitle.Location = new Point(16, 39);
             configCategorySubtitle.Name = "configCategorySubtitle";
             configCategorySubtitle.Size = new Size(188, 34);
             configCategorySubtitle.Text = "Choose an area to configure";
 
             configCategoryList.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            configCategoryList.BackColor = Color.FromArgb(23, 29, 37);
+            configCategoryList.BackColor = ConfigurationTheme.Surface;
             configCategoryList.BorderStyle = BorderStyle.None;
             configCategoryList.DrawMode = DrawMode.OwnerDrawFixed;
             configCategoryList.Font = new Font("Segoe UI Semibold", 11F);
-            configCategoryList.ForeColor = Color.FromArgb(226, 231, 236);
+            configCategoryList.ForeColor = ConfigurationTheme.TextSecondary;
             configCategoryList.IntegralHeight = false;
             configCategoryList.ItemHeight = 44;
             configCategoryList.Location = new Point(8, 78);
             configCategoryList.Name = "configCategoryList";
             configCategoryList.Size = new Size(204, 366);
             configCategoryList.TabIndex = 0;
+            configCategoryList.Cursor = Cursors.Hand;
             configCategoryList.DrawItem += ConfigCategoryList_DrawItem;
+            configCategoryList.MouseLeave += ConfigCategoryList_MouseLeave;
+            configCategoryList.MouseMove += ConfigCategoryList_MouseMove;
             configCategoryList.SelectedIndexChanged += ConfigCategoryList_SelectedIndexChanged;
 
             configSectionHeaderPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            configSectionHeaderPanel.BackColor = Color.FromArgb(23, 29, 37);
+            configSectionHeaderPanel.BackColor = ConfigurationTheme.Surface;
             configSectionHeaderPanel.Controls.Add(configSectionDescription);
             configSectionHeaderPanel.Controls.Add(configSectionTitle);
             configSectionHeaderPanel.Location = new Point(0, 0);
@@ -605,7 +613,7 @@ namespace SysBot.Pokemon.WinForms
 
             configSectionTitle.AutoSize = true;
             configSectionTitle.Font = new Font("Segoe UI Semibold", 14F);
-            configSectionTitle.ForeColor = Color.FromArgb(244, 246, 248);
+            configSectionTitle.ForeColor = ConfigurationTheme.TextPrimary;
             configSectionTitle.Location = new Point(16, 9);
             configSectionTitle.Name = "configSectionTitle";
             configSectionTitle.Text = "General";
@@ -613,46 +621,52 @@ namespace SysBot.Pokemon.WinForms
             configSectionDescription.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             configSectionDescription.AutoEllipsis = true;
             configSectionDescription.Font = new Font("Segoe UI", 9.5F);
-            configSectionDescription.ForeColor = Color.FromArgb(158, 172, 189);
+            configSectionDescription.ForeColor = ConfigurationTheme.TextMuted;
             configSectionDescription.Location = new Point(17, 35);
             configSectionDescription.Name = "configSectionDescription";
             configSectionDescription.Size = new Size(580, 22);
             configSectionDescription.Text = "Core bot identity and application behavior";
 
-            // Property Grid Container - readable dark layout
-            var pgContainer = new Panel();
-            pgContainer.BackColor = Color.FromArgb(48, 60, 73);
+            // Descriptor-backed settings surface for the focused categories.
+            configSettingsTree.BackColor = ConfigurationTheme.Canvas;
+            configSettingsTree.Dock = DockStyle.Fill;
+            configSettingsTree.Location = new Point(0, 72);
+            configSettingsTree.Name = "configSettingsTree";
+            configSettingsTree.Size = new Size(614, 380);
+            configSettingsTree.TabIndex = 0;
+
+            // Property Grid Container - complete fallback for All settings.
+            pgContainer.BackColor = ConfigurationTheme.Border;
             pgContainer.Dock = DockStyle.Fill;
             pgContainer.Location = new Point(0, 72);
             pgContainer.Name = "pgContainer";
             pgContainer.Padding = new Padding(1);
             pgContainer.Size = new Size(614, 380);
             EnableDoubleBuffering(pgContainer);
-            configContentSplit.Panel2.Controls.Add(pgContainer);
 
             // Property Grid - dark Poké Ball palette
-            PG_Hub.BackColor = Color.FromArgb(23, 29, 37);
-            PG_Hub.CategoryForeColor = Color.FromArgb(244, 246, 248);
-            PG_Hub.CategorySplitterColor = Color.FromArgb(48, 60, 73);
-            PG_Hub.CommandsBackColor = Color.FromArgb(23, 29, 37);
-            PG_Hub.CommandsForeColor = Color.FromArgb(244, 246, 248);
+            PG_Hub.BackColor = ConfigurationTheme.Surface;
+            PG_Hub.CategoryForeColor = ConfigurationTheme.TextPrimary;
+            PG_Hub.CategorySplitterColor = ConfigurationTheme.Border;
+            PG_Hub.CommandsBackColor = ConfigurationTheme.Surface;
+            PG_Hub.CommandsForeColor = ConfigurationTheme.TextPrimary;
             PG_Hub.Dock = DockStyle.Fill;
             PG_Hub.Font = new Font("Segoe UI", 15F);
             // Keep the settings viewport available for properties. The reskin's
             // section header already provides context, while PropertyGrid's
             // built-in help pane consumes roughly half the available height.
             PG_Hub.HelpVisible = false;
-            PG_Hub.HelpBackColor = Color.FromArgb(23, 29, 37);
-            PG_Hub.HelpForeColor = Color.FromArgb(190, 199, 209);
-            PG_Hub.LineColor = Color.FromArgb(48, 60, 73);
+            PG_Hub.HelpBackColor = ConfigurationTheme.Surface;
+            PG_Hub.HelpForeColor = ConfigurationTheme.TextSecondary;
+            PG_Hub.LineColor = ConfigurationTheme.Border;
             PG_Hub.Location = new Point(1, 1);
             PG_Hub.Name = "PG_Hub";
             PG_Hub.PropertySort = PropertySort.Categorized;
             PG_Hub.Size = new Size(612, 378);
             PG_Hub.TabIndex = 0;
             PG_Hub.ToolbarVisible = false;
-            PG_Hub.ViewBackColor = Color.FromArgb(29, 38, 49);
-            PG_Hub.ViewForeColor = Color.FromArgb(244, 246, 248);
+            PG_Hub.ViewBackColor = ConfigurationTheme.Canvas;
+            PG_Hub.ViewForeColor = ConfigurationTheme.TextPrimary;
             pgContainer.Controls.Add(PG_Hub);
             PG_Hub.CreateControl();
 
@@ -940,15 +954,15 @@ namespace SysBot.Pokemon.WinForms
 
         private static void ConfigureConfigurationScaleButton(Button button, string text, int width)
         {
-            button.BackColor = Color.FromArgb(29, 38, 49);
+            button.BackColor = ConfigurationTheme.Canvas;
             button.Cursor = Cursors.Hand;
-            button.FlatAppearance.BorderColor = Color.FromArgb(72, 84, 98);
+            button.FlatAppearance.BorderColor = ConfigurationTheme.BorderStrong;
             button.FlatAppearance.BorderSize = 1;
-            button.FlatAppearance.MouseDownBackColor = Color.FromArgb(177, 55, 55);
-            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(67, 42, 45);
+            button.FlatAppearance.MouseDownBackColor = ConfigurationTheme.AccentPressed;
+            button.FlatAppearance.MouseOverBackColor = ConfigurationTheme.SurfaceSelected;
             button.FlatStyle = FlatStyle.Flat;
             button.Font = new Font("Segoe UI Semibold", text == "Reset" ? 8.5F : 11F);
-            button.ForeColor = Color.FromArgb(244, 246, 248);
+            button.ForeColor = ConfigurationTheme.TextPrimary;
             button.Margin = new Padding(0);
             button.Size = new Size(width, 30);
             button.Text = text;
@@ -1459,7 +1473,7 @@ namespace SysBot.Pokemon.WinForms
 
         private void ConfigurationToolbarPanel_Paint(object sender, PaintEventArgs e)
         {
-            using var accent = new Pen(Color.FromArgb(230, 77, 77), 2);
+            using var accent = new Pen(ConfigurationTheme.Accent, 2);
             e.Graphics.DrawLine(accent, 0, 8, 0, configToolbarPanel.Height - 8);
         }
 
@@ -1476,15 +1490,15 @@ namespace SysBot.Pokemon.WinForms
             var state = graphics.Save();
             graphics.SetClip(path);
 
-            using (var red = new SolidBrush(Color.FromArgb(230, 77, 77)))
+            using (var red = new SolidBrush(ConfigurationTheme.Accent))
                 graphics.FillRectangle(red, bounds.X, bounds.Y, bounds.Width, bounds.Height / 2);
-            using (var white = new SolidBrush(Color.FromArgb(244, 246, 248)))
+            using (var white = new SolidBrush(ConfigurationTheme.TextPrimary))
                 graphics.FillRectangle(white, bounds.X, bounds.Y + bounds.Height / 2, bounds.Width, bounds.Height / 2 + 1);
-            using (var divider = new Pen(Color.FromArgb(17, 22, 29), Math.Max(3, bounds.Height / 8f)))
+            using (var divider = new Pen(ConfigurationTheme.Ink, Math.Max(3, bounds.Height / 8f)))
                 graphics.DrawLine(divider, bounds.Left, bounds.Top + bounds.Height / 2, bounds.Right, bounds.Top + bounds.Height / 2);
 
             graphics.Restore(state);
-            using (var outline = new Pen(Color.FromArgb(17, 22, 29), 2))
+            using (var outline = new Pen(ConfigurationTheme.Ink, 2))
                 graphics.DrawEllipse(outline, bounds);
 
             var centerSize = Math.Max(7, bounds.Width / 3);
@@ -1493,9 +1507,9 @@ namespace SysBot.Pokemon.WinForms
                 bounds.Top + (bounds.Height - centerSize) / 2,
                 centerSize,
                 centerSize);
-            using (var centerFill = new SolidBrush(Color.FromArgb(244, 246, 248)))
+            using (var centerFill = new SolidBrush(ConfigurationTheme.TextPrimary))
                 graphics.FillEllipse(centerFill, center);
-            using (var centerOutline = new Pen(Color.FromArgb(17, 22, 29), 2))
+            using (var centerOutline = new Pen(ConfigurationTheme.Ink, 2))
                 graphics.DrawEllipse(centerOutline, center);
         }
 
@@ -1844,6 +1858,8 @@ namespace SysBot.Pokemon.WinForms
         private Button B_New;
         private FlowLayoutPanel FLP_Bots;
         private PropertyGrid PG_Hub;
+        private ConfigurationSettingsTree configSettingsTree;
+        private Panel pgContainer;
         private Panel configToolbarPanel;
         private Panel configThemeMark;
         private Label configToolbarTitle;

@@ -2,9 +2,11 @@ using System;
 using System.Collections;
 using System.ComponentModel;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Design;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Windows.Forms;
 using System.Windows.Forms.Design;
 
@@ -14,6 +16,17 @@ internal static class ConfigurationDropDownTheme
 {
     private static readonly object RegistrationLock = new();
     private static bool _registered;
+    private static int _scalePercent = ProgramConfig.DefaultConfigurationFontScalePercent;
+
+    public static int ScalePercent => Volatile.Read(ref _scalePercent);
+
+    public static void SetScale(int percent) =>
+        Volatile.Write(
+            ref _scalePercent,
+            Math.Clamp(
+                percent,
+                ProgramConfig.MinConfigurationFontScalePercent,
+                ProgramConfig.MaxConfigurationFontScalePercent));
 
     public static void Register(Assembly settingsAssembly)
     {
@@ -70,7 +83,6 @@ public sealed class DarkStandardValuesEditor : UITypeEditor
 
 internal sealed class DarkStandardValuesDropDown : Panel
 {
-    private const int ItemHeight = 32;
     private const int VisibleItemLimit = 8;
 
     private readonly DarkStandardValuesListBox _list;
@@ -86,15 +98,17 @@ internal sealed class DarkStandardValuesDropDown : Panel
     {
         _initialValue = currentValue;
         _editorService = editorService;
+        var scalePercent = ConfigurationDropDownTheme.ScalePercent;
+        var itemHeight = ConfigurationTheme.ScalePixels(34, scalePercent);
 
-        BackColor = Color.FromArgb(72, 84, 98);
+        BackColor = ConfigurationTheme.BorderStrong;
         Padding = new Padding(1);
 
         var displayValues = values.Cast<object>().ToArray();
-        _list = new DarkStandardValuesListBox(converter, context)
+        _list = new DarkStandardValuesListBox(converter, context, scalePercent)
         {
             Dock = DockStyle.Fill,
-            ItemHeight = ItemHeight,
+            ItemHeight = itemHeight,
         };
         _list.Items.AddRange(displayValues);
         _list.SelectedItem = currentValue;
@@ -108,8 +122,11 @@ internal sealed class DarkStandardValuesDropDown : Panel
             .Select(label => TextRenderer.MeasureText(label, _list.Font).Width)
             .DefaultIfEmpty(140)
             .Max();
-        Width = Math.Clamp(longestLabel + 58, 190, 420);
-        Height = Math.Min(displayValues.Length, VisibleItemLimit) * ItemHeight + Padding.Vertical;
+        Width = Math.Clamp(
+            longestLabel + ConfigurationTheme.ScalePixels(52, scalePercent),
+            ConfigurationTheme.ScalePixels(190, scalePercent),
+            ConfigurationTheme.ScalePixels(420, scalePercent));
+        Height = Math.Min(displayValues.Length, VisibleItemLimit) * itemHeight + Padding.Vertical;
     }
 
     public bool Cancelled { get; private set; }
@@ -147,20 +164,27 @@ internal sealed class DarkStandardValuesListBox : ListBox
 {
     private readonly TypeConverter _converter;
     private readonly ITypeDescriptorContext _context;
-    private readonly Font _ownedFont = new("Segoe UI Semibold", 10F);
+    private readonly Font _ownedFont;
+    private readonly int _scalePercent;
     private int _hotIndex = NoMatches;
 
-    public DarkStandardValuesListBox(TypeConverter converter, ITypeDescriptorContext context)
+    public DarkStandardValuesListBox(TypeConverter converter, ITypeDescriptorContext context, int scalePercent)
     {
         _converter = converter;
         _context = context;
+        _scalePercent = scalePercent;
+        _ownedFont = new Font(
+            "Segoe UI Semibold",
+            ConfigurationTheme.ScaleFont(9.5F, scalePercent),
+            FontStyle.Regular,
+            GraphicsUnit.Point);
 
-        BackColor = Color.FromArgb(23, 29, 37);
+        BackColor = ConfigurationTheme.SurfaceRaised;
         BorderStyle = BorderStyle.None;
         Cursor = Cursors.Hand;
         DrawMode = DrawMode.OwnerDrawFixed;
         Font = _ownedFont;
-        ForeColor = Color.FromArgb(226, 231, 236);
+        ForeColor = ConfigurationTheme.TextSecondary;
         IntegralHeight = false;
 
         SetStyle(
@@ -196,9 +220,9 @@ internal sealed class DarkStandardValuesListBox : ListBox
         var selected = (e.State & DrawItemState.Selected) != 0;
         var hot = e.Index == _hotIndex;
         var background = selected
-            ? Color.FromArgb(67, 42, 45)
+            ? ConfigurationTheme.SurfaceSelected
             : hot
-                ? Color.FromArgb(37, 46, 58)
+                ? ConfigurationTheme.SurfaceHover
                 : BackColor;
 
         using (var backgroundBrush = new SolidBrush(background))
@@ -206,48 +230,46 @@ internal sealed class DarkStandardValuesListBox : ListBox
 
         if (selected)
         {
-            using var accentBrush = new SolidBrush(Color.FromArgb(230, 77, 77));
-            e.Graphics.FillRectangle(accentBrush, e.Bounds.Left, e.Bounds.Top, 3, e.Bounds.Height);
-            e.Graphics.FillEllipse(
-                accentBrush,
-                e.Bounds.Left + 13,
-                e.Bounds.Top + (e.Bounds.Height - 8) / 2,
-                8,
-                8);
-        }
-        else
-        {
-            using var outline = new Pen(Color.FromArgb(112, 127, 143));
-            e.Graphics.DrawEllipse(
-                outline,
-                e.Bounds.Left + 13,
-                e.Bounds.Top + (e.Bounds.Height - 8) / 2,
-                8,
-                8);
+            var checkLeft = e.Bounds.Left + ConfigurationTheme.ScalePixels(13, _scalePercent);
+            var checkCenterY = e.Bounds.Top + e.Bounds.Height / 2;
+            using var checkPen = new Pen(
+                ConfigurationTheme.Accent,
+                ConfigurationTheme.ScalePixels(2, _scalePercent))
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round,
+            };
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.DrawLines(
+                checkPen,
+                [
+                    new Point(checkLeft, checkCenterY),
+                    new Point(
+                        checkLeft + ConfigurationTheme.ScalePixels(4, _scalePercent),
+                        checkCenterY + ConfigurationTheme.ScalePixels(4, _scalePercent)),
+                    new Point(
+                        checkLeft + ConfigurationTheme.ScalePixels(11, _scalePercent),
+                        checkCenterY - ConfigurationTheme.ScalePixels(5, _scalePercent)),
+                ]);
+            e.Graphics.SmoothingMode = SmoothingMode.Default;
         }
 
         var value = Items[e.Index];
         var label = _converter.ConvertToString(_context, null, value) ?? value?.ToString() ?? string.Empty;
+        var textLeft = e.Bounds.Left + ConfigurationTheme.ScalePixels(38, _scalePercent);
         var textBounds = new Rectangle(
-            e.Bounds.Left + 34,
+            textLeft,
             e.Bounds.Top,
-            e.Bounds.Width - 42,
+            e.Bounds.Right - textLeft - ConfigurationTheme.ScalePixels(12, _scalePercent),
             e.Bounds.Height);
         TextRenderer.DrawText(
             e.Graphics,
             label,
             Font,
             textBounds,
-            selected ? Color.FromArgb(244, 246, 248) : ForeColor,
+            selected ? ConfigurationTheme.TextPrimary : ForeColor,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-
-        using var divider = new Pen(Color.FromArgb(48, 60, 73));
-        e.Graphics.DrawLine(
-            divider,
-            e.Bounds.Left + 8,
-            e.Bounds.Bottom - 1,
-            e.Bounds.Right - 8,
-            e.Bounds.Bottom - 1);
     }
 
     protected override void Dispose(bool disposing)

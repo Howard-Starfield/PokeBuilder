@@ -5,7 +5,11 @@ using System.Linq;
 
 namespace SysBot.Pokemon.WinForms;
 
-internal sealed record ConfigurationCategoryItem(string Name, string Description, object View)
+internal sealed record ConfigurationCategoryItem(
+    string Name,
+    string Description,
+    object View,
+    bool UsePropertyGrid = false)
 {
     public override string ToString() => Name;
 }

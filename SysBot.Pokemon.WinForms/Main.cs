@@ -51,6 +51,7 @@ namespace SysBot.Pokemon.WinForms
         private System.Windows.Forms.Timer? _logCleanupTimer;
         private readonly object _configSaveLock = new();
         private bool _isFormLoading = true;
+        private int _configCategoryHotIndex = ListBox.NoMatches;
 
         private SearchManager _searchManager = null!;
         private TextBoxForwarder _textBoxForwarder = null!;
@@ -345,6 +346,7 @@ namespace SysBot.Pokemon.WinForms
             InitializeConfigurationCategories();
             ApplyConfigurationFontScale(Config.ConfigurationFontScalePercent);
             DarkModeHelper.ApplyDarkModeToControlTree(PG_Hub);
+            ConfigurationPropertyGridTheme.Apply(PG_Hub);
             DarkModeHelper.ApplyDarkModeToControlTree(configCategoryList);
             DarkModeHelper.ApplyDarkModeToControlTree(FLP_Bots);
             DarkModeHelper.ApplyDarkModeToControlTree(RTB_Logs);
@@ -478,7 +480,11 @@ namespace SysBot.Pokemon.WinForms
                         nameof(PokeTradeHubConfig.TradeAbuse),
                         nameof(BaseConfig.SkipConsoleBotCreation),
                     ])),
-                new("All settings", "The complete configuration tree, grouped by its original categories.", hub),
+                new(
+                    "All settings",
+                    "The complete configuration tree, grouped by its original categories.",
+                    hub,
+                    UsePropertyGrid: true),
             };
 
             configCategoryList.BeginUpdate();
@@ -504,9 +510,38 @@ namespace SysBot.Pokemon.WinForms
 
             configSectionTitle.Text = selected.Name;
             configSectionDescription.Text = selected.Description;
-            PG_Hub.SelectedObject = selected.View;
-            PG_Hub.Refresh();
+            if (selected.UsePropertyGrid)
+            {
+                configSettingsTree.Visible = false;
+                pgContainer.Visible = true;
+                pgContainer.BringToFront();
+                PG_Hub.SelectedObject = selected.View;
+                PG_Hub.Refresh();
+            }
+            else
+            {
+                pgContainer.Visible = false;
+                configSettingsTree.Visible = true;
+                configSettingsTree.BringToFront();
+                configSettingsTree.Bind(
+                    selected.View,
+                    Config.ConfigurationFontScalePercent,
+                    SaveCurrentConfig,
+                    OpenAllSettings);
+            }
             configCategoryList.Invalidate();
+        }
+
+        private void OpenAllSettings()
+        {
+            for (var index = 0; index < configCategoryList.Items.Count; index++)
+            {
+                if (configCategoryList.Items[index] is ConfigurationCategoryItem { UsePropertyGrid: true })
+                {
+                    configCategoryList.SelectedIndex = index;
+                    return;
+                }
+            }
         }
 
         private void ConfigCategoryList_DrawItem(object? sender, DrawItemEventArgs e)
@@ -515,24 +550,54 @@ namespace SysBot.Pokemon.WinForms
                 return;
 
             var selected = (e.State & DrawItemState.Selected) != 0;
-            var background = selected ? Color.FromArgb(48, 34, 39) : Color.FromArgb(23, 29, 37);
-            using (var backgroundBrush = new SolidBrush(background))
+            var hot = e.Index == _configCategoryHotIndex;
+            using (var backgroundBrush = new SolidBrush(ConfigurationTheme.Surface))
                 e.Graphics.FillRectangle(backgroundBrush, e.Bounds);
+
+            var rowBounds = Rectangle.Inflate(e.Bounds, -5, -3);
+            var rowBackground = selected
+                ? ConfigurationTheme.SurfaceSelected
+                : hot
+                    ? ConfigurationTheme.SurfaceHover
+                    : ConfigurationTheme.Surface;
+            using (var rowPath = new GraphicsPath())
+            using (var rowBrush = new SolidBrush(rowBackground))
+            {
+                rowPath.AddRoundedRectangle(rowBounds, 7);
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                e.Graphics.FillPath(rowBrush, rowPath);
+            }
 
             if (selected)
             {
-                using var accentBrush = new SolidBrush(Color.FromArgb(230, 77, 77));
-                e.Graphics.FillRectangle(accentBrush, e.Bounds.Left, e.Bounds.Top + 5, 3, e.Bounds.Height - 10);
+                using var accentBrush = new SolidBrush(ConfigurationTheme.Accent);
+                e.Graphics.FillRectangle(
+                    accentBrush,
+                    rowBounds.Left,
+                    rowBounds.Top + 5,
+                    3,
+                    rowBounds.Height - 10);
+                var markerSize = Math.Clamp((int)Math.Round(configCategoryList.Font.GetHeight() * 1.05F), 16, 24);
                 DrawPokeBall(
                     e.Graphics,
-                    new Rectangle(e.Bounds.Left + 14, e.Bounds.Top + (e.Bounds.Height - 18) / 2, 18, 18));
+                    new Rectangle(
+                        rowBounds.Left + 14,
+                        e.Bounds.Top + (e.Bounds.Height - markerSize) / 2,
+                        markerSize,
+                        markerSize));
             }
             else
             {
-                var center = new Point(e.Bounds.Left + 23, e.Bounds.Top + e.Bounds.Height / 2);
-                using var outline = new Pen(Color.FromArgb(112, 127, 143), 1.5F);
-                e.Graphics.DrawEllipse(outline, center.X - 6, center.Y - 6, 12, 12);
-                e.Graphics.DrawLine(outline, center.X - 5, center.Y, center.X + 5, center.Y);
+                var markerSize = hot ? 6 : 5;
+                var center = new Point(rowBounds.Left + 23, e.Bounds.Top + e.Bounds.Height / 2);
+                using var marker = new SolidBrush(
+                    hot ? ConfigurationTheme.Accent : ConfigurationTheme.TextMuted);
+                e.Graphics.FillEllipse(
+                    marker,
+                    center.X - markerSize / 2,
+                    center.Y - markerSize / 2,
+                    markerSize,
+                    markerSize);
             }
 
             var item = (ConfigurationCategoryItem)configCategoryList.Items[e.Index];
@@ -546,11 +611,39 @@ namespace SysBot.Pokemon.WinForms
                 item.Name,
                 configCategoryList.Font,
                 textBounds,
-                selected ? Color.FromArgb(244, 246, 248) : Color.FromArgb(205, 214, 223),
+                selected || hot ? ConfigurationTheme.TextPrimary : ConfigurationTheme.TextSecondary,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
             if ((e.State & DrawItemState.Focus) != 0)
-                e.DrawFocusRectangle();
+                ControlPaint.DrawFocusRectangle(
+                    e.Graphics,
+                    Rectangle.Inflate(rowBounds, -3, -3),
+                    ConfigurationTheme.TextPrimary,
+                    rowBackground);
+        }
+
+        private void ConfigCategoryList_MouseMove(object? sender, MouseEventArgs e)
+        {
+            var nextHotIndex = configCategoryList.IndexFromPoint(e.Location);
+            if (nextHotIndex == _configCategoryHotIndex)
+                return;
+
+            var previousHotIndex = _configCategoryHotIndex;
+            _configCategoryHotIndex = nextHotIndex;
+            if (previousHotIndex != ListBox.NoMatches)
+                configCategoryList.Invalidate(configCategoryList.GetItemRectangle(previousHotIndex));
+            if (_configCategoryHotIndex != ListBox.NoMatches)
+                configCategoryList.Invalidate(configCategoryList.GetItemRectangle(_configCategoryHotIndex));
+        }
+
+        private void ConfigCategoryList_MouseLeave(object? sender, EventArgs e)
+        {
+            if (_configCategoryHotIndex == ListBox.NoMatches)
+                return;
+
+            var previousHotIndex = _configCategoryHotIndex;
+            _configCategoryHotIndex = ListBox.NoMatches;
+            configCategoryList.Invalidate(configCategoryList.GetItemRectangle(previousHotIndex));
         }
 
         private void ApplyConfigurationFontScale(int requestedPercent, bool persist = false)
@@ -561,12 +654,14 @@ namespace SysBot.Pokemon.WinForms
                 ProgramConfig.MaxConfigurationFontScalePercent);
 
             Config.ConfigurationFontScalePercent = percent;
+            ConfigurationDropDownTheme.SetScale(percent);
             lblConfigFontScale.Text = $"{percent}%";
             btnConfigFontDecrease.Enabled = percent > ProgramConfig.MinConfigurationFontScalePercent;
             btnConfigFontIncrease.Enabled = percent < ProgramConfig.MaxConfigurationFontScalePercent;
 
             ReplaceControlFont(PG_Hub, new Font("Segoe UI", 12F * percent / 100F, FontStyle.Regular, GraphicsUnit.Point));
             ReplaceControlFont(configCategoryList, new Font("Segoe UI Semibold", 11F * percent / 100F, FontStyle.Regular, GraphicsUnit.Point));
+            configSettingsTree.SetScale(percent);
             configCategoryList.ItemHeight = Math.Clamp(
                 (int)Math.Ceiling(configCategoryList.Font.GetHeight() * 2.1F),
                 44,
