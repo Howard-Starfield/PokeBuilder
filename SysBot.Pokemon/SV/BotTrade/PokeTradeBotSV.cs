@@ -1656,26 +1656,21 @@ public class PokeTradeBotSV(PokeTradeHub<PK9> Hub, PokeBotState Config) : PokeRo
     private async Task<bool> RecoverToPortal(CancellationToken token)
     {
         Log("Reorienting to Poké Portal.");
-        var attempts = 0;
-        while (await IsInPokePortal(PortalOffset, token).ConfigureAwait(false))
+        var exited = await PokePortalRecovery.TryExitAsync(
+            t => IsInPokePortal(PortalOffset, t),
+            (delay, t) => Click(B, delay, t),
+            (delay, t) => Click(A, delay, t),
+            (delay, t) => Task.Delay(delay, t),
+            token).ConfigureAwait(false);
+
+        if (!exited)
         {
-            // First B press: exits portal menus OR triggers "Do you want to stop searching?" dialog.
-            await Click(B, 1_000, token).ConfigureAwait(false);
-            if (!await IsInPokePortal(PortalOffset, token).ConfigureAwait(false))
-                break;
-
-            // Follow up with A to confirm any "stop searching?" / yes-no dialog.
-            // Safe in portal menus: A either confirms a selection or does nothing harmful.
-            await Click(A, 1_000, token).ConfigureAwait(false);
-            if (!await IsInPokePortal(PortalOffset, token).ConfigureAwait(false))
-                break;
-
-            if (++attempts >= 30)
-            {
-                Log("Failed to recover to Poké Portal.");
-                return false;
-            }
+            Log("Failed to recover to Poké Portal.");
+            return false;
         }
+
+        // Let the portal-to-X-menu transition settle before trying to re-enter.
+        await Task.Delay(1_000, token).ConfigureAwait(false);
 
         // Should be in the X menu hovered over Poké Portal.
         await Click(A, 1_000, token).ConfigureAwait(false);
