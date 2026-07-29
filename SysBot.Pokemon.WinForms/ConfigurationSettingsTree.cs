@@ -741,8 +741,10 @@ internal sealed class ModernChoiceEditor : Button
     private readonly Action<object> _valueChanged;
     private readonly Font _ownedFont;
     private readonly int _scalePercent;
+    private ContextMenuStrip? _activeMenu;
     private string _accessibleLabel = "Setting";
     private object? _value;
+    private bool _disposing;
     private bool _hot;
 
     public ModernChoiceEditor(
@@ -844,12 +846,30 @@ internal sealed class ModernChoiceEditor : Button
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
+            _disposing = true;
+            var menu = _activeMenu;
+            _activeMenu = null;
+            if (menu is not null && !menu.IsDisposed)
+                menu.Dispose();
             _ownedFont.Dispose();
+        }
         base.Dispose(disposing);
     }
 
     private void ShowOptions()
     {
+        if (_disposing || IsDisposed)
+            return;
+
+        if (_activeMenu is { IsDisposed: false, Visible: true })
+            return;
+
+        var previousMenu = _activeMenu;
+        _activeMenu = null;
+        if (previousMenu is not null && !previousMenu.IsDisposed)
+            previousMenu.Dispose();
+
         var itemHeight = ConfigurationTheme.ScalePixels(36, _scalePercent);
         var menuWidth = Math.Max(Width, ConfigurationTheme.ScalePixels(160, _scalePercent));
         var menu = new ContextMenuStrip
@@ -893,7 +913,31 @@ internal sealed class ModernChoiceEditor : Button
             foreach (ToolStripItem item in menu.Items)
                 item.Size = new Size(availableWidth, itemHeight);
         };
-        menu.Closed += (_, _) => menu.Dispose();
+        menu.Closed += (_, _) =>
+        {
+            if (_disposing || IsDisposed || !IsHandleCreated)
+                return;
+
+            try
+            {
+                BeginInvoke((Action)(() =>
+                {
+                    if (ReferenceEquals(_activeMenu, menu))
+                        _activeMenu = null;
+                    if (!menu.IsDisposed)
+                        menu.Dispose();
+                }));
+            }
+            catch (ObjectDisposedException)
+            {
+                // The editor owns the menu and disposes it with the control.
+            }
+            catch (InvalidOperationException)
+            {
+                // The editor handle was destroyed while the menu was closing.
+            }
+        };
+        _activeMenu = menu;
         menu.Show(this, new Point(0, Height));
     }
 

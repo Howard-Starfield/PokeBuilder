@@ -54,6 +54,8 @@ namespace SysBot.Pokemon.WinForms
             navButtonsPanel = new FlowLayoutPanel();
             btnNavBots = new Button();
             btnNavHub = new Button();
+            btnNavMcp = new Button();
+            btnNavTesting = new Button();
             btnNavLogs = new Button();
             sidebarBottomPanel = new Panel();
             btnUpdate = new Button();
@@ -67,6 +69,8 @@ namespace SysBot.Pokemon.WinForms
 
             botsPanel = new Panel();
             hubPanel = new Panel();
+            mcpPanel = new McpControlPlanePanel();
+            testingPanel = new ControlPlaneTestingPanel();
             logsPanel = new Panel();
 
             botHeaderPanel = new Panel();
@@ -204,6 +208,8 @@ namespace SysBot.Pokemon.WinForms
             navButtonsPanel.AutoSize = false;
             navButtonsPanel.Controls.Add(btnNavBots);
             navButtonsPanel.Controls.Add(btnNavHub);
+            navButtonsPanel.Controls.Add(btnNavMcp);
+            navButtonsPanel.Controls.Add(btnNavTesting);
             navButtonsPanel.Controls.Add(btnNavLogs);
             navButtonsPanel.Dock = DockStyle.Fill;
             navButtonsPanel.FlowDirection = FlowDirection.TopDown;
@@ -218,9 +224,36 @@ namespace SysBot.Pokemon.WinForms
 
             // One restrained Poké Ball-red accent keeps navigation consistent.
             var pokeBallAccent = Color.FromArgb(230, 77, 77);
-            ConfigureNavButton(btnNavBots, "BOTS", 0, "Manage bot connections", pokeBallAccent);
-            ConfigureNavButton(btnNavHub, "CONFIGURATION", 1, "System settings", pokeBallAccent);
-            ConfigureNavButton(btnNavLogs, "SYSTEM LOGS", 2, "View activity logs", pokeBallAccent);
+            ConfigureNavButton(
+                btnNavBots,
+                "BOTS",
+                NavigationBotsIndex,
+                "Manage bot connections",
+                pokeBallAccent);
+            ConfigureNavButton(
+                btnNavHub,
+                "CONFIGURATION",
+                NavigationConfigurationIndex,
+                "System settings",
+                pokeBallAccent);
+            ConfigureNavButton(
+                btnNavMcp,
+                "MCP",
+                NavigationMcpIndex,
+                "View MCP control-plane status",
+                pokeBallAccent);
+            ConfigureNavButton(
+                btnNavTesting,
+                "TESTING",
+                NavigationTestingIndex,
+                "Run read-only MCP and runtime tests",
+                pokeBallAccent);
+            ConfigureNavButton(
+                btnNavLogs,
+                "SYSTEM LOGS",
+                NavigationLogsIndex,
+                "View activity logs",
+                pokeBallAccent);
 
             var separator = new Panel();
             separator.BackColor = Color.FromArgb(32, 38, 48);
@@ -229,7 +262,12 @@ namespace SysBot.Pokemon.WinForms
             navButtonsPanel.Controls.Add(separator);
 
             var btnTray = new Button();
-            ConfigureNavButton(btnTray, "SEND TO TRAY", 3, "Minimize to system tray", Color.FromArgb(102, 192, 244));
+            ConfigureNavButton(
+                btnTray,
+                "SEND TO TRAY",
+                NavigationPanelCount,
+                "Minimize to system tray",
+                Color.FromArgb(102, 192, 244));
             btnTray.Click += BtnTray_Click;
             navButtonsPanel.Controls.Add(btnTray);
 
@@ -288,6 +326,8 @@ namespace SysBot.Pokemon.WinForms
             contentPanel.BackColor = Color.FromArgb(30, 35, 44);
             contentPanel.Controls.Add(botsPanel);
             contentPanel.Controls.Add(hubPanel);
+            contentPanel.Controls.Add(mcpPanel);
+            contentPanel.Controls.Add(testingPanel);
             contentPanel.Controls.Add(logsPanel);
             contentPanel.Controls.Add(headerPanel);
             contentPanel.Dock = DockStyle.Fill;
@@ -670,6 +710,22 @@ namespace SysBot.Pokemon.WinForms
             pgContainer.Controls.Add(PG_Hub);
             PG_Hub.CreateControl();
 
+            // MCP Panel
+            mcpPanel.Dock = DockStyle.Fill;
+            mcpPanel.Location = new Point(0, 60);
+            mcpPanel.Name = "mcpPanel";
+            mcpPanel.Size = new Size(860, 540);
+            mcpPanel.TabIndex = NavigationMcpIndex;
+            mcpPanel.Visible = false;
+
+            // Testing Panel
+            testingPanel.Dock = DockStyle.Fill;
+            testingPanel.Location = new Point(0, 60);
+            testingPanel.Name = "testingPanel";
+            testingPanel.Size = new Size(860, 540);
+            testingPanel.TabIndex = NavigationTestingIndex;
+            testingPanel.Visible = false;
+
             // Logs Panel
             logsPanel.BackColor = Color.Transparent;
             logsPanel.Dock = DockStyle.Fill;
@@ -677,7 +733,7 @@ namespace SysBot.Pokemon.WinForms
             logsPanel.Name = "logsPanel";
             logsPanel.Padding = new Padding(10);
             logsPanel.Size = new Size(860, 540);
-            logsPanel.TabIndex = 2;
+            logsPanel.TabIndex = NavigationLogsIndex;
             logsPanel.Visible = false;
             EnableDoubleBuffering(logsPanel);
 
@@ -807,9 +863,13 @@ namespace SysBot.Pokemon.WinForms
             TC_Main = new TabControl { Visible = false };
             Tab_Bots = new TabPage();
             Tab_Hub = new TabPage();
+            Tab_Mcp = new TabPage();
+            Tab_Testing = new TabPage();
             Tab_Logs = new TabPage();
             TC_Main.TabPages.Add(Tab_Bots);
             TC_Main.TabPages.Add(Tab_Hub);
+            TC_Main.TabPages.Add(Tab_Mcp);
+            TC_Main.TabPages.Add(Tab_Testing);
             TC_Main.TabPages.Add(Tab_Logs);
             TC_Main.SendToBack();
 
@@ -1031,10 +1091,12 @@ namespace SysBot.Pokemon.WinForms
                 using var iconFont = new Font("Segoe MDL2 Assets", 13F);
                 string iconText = index switch
                 {
-                    0 => "\uE77B", // Bots icon
-                    1 => "\uE713", // Settings icon
-                    2 => "\uE7C3", // Logs icon
-                    3 => "\uE74A", // Down arrow icon (minimize to tray)
+                    NavigationBotsIndex => "\uE77B", // Bots icon
+                    NavigationConfigurationIndex => "\uE713", // Settings icon
+                    NavigationMcpIndex => "\uE968", // Connected service icon
+                    NavigationTestingIndex => "\uE9D9", // Developer tools icon
+                    NavigationLogsIndex => "\uE7C3", // Logs icon
+                    NavigationPanelCount => "\uE74A", // Minimize to tray
                     _ => "\uE700"
                 };
 
@@ -1052,7 +1114,8 @@ namespace SysBot.Pokemon.WinForms
             };
 
             btn.Click += (s, e) => {
-                if (index >= 3) return; // Don't select tray button
+                if (index >= NavigationPanelCount)
+                    return; // Don't select the tray button.
 
                 // Update all nav buttons
                 foreach (Button navBtn in navButtonsPanel.Controls.OfType<Button>())
@@ -1073,9 +1136,11 @@ namespace SysBot.Pokemon.WinForms
 
                 titleLabel.Text = index switch
                 {
-                    0 => "Bot Management",
-                    1 => "Configuration",
-                    2 => "System Logs",
+                    NavigationBotsIndex => "Bot Management",
+                    NavigationConfigurationIndex => "Configuration",
+                    NavigationMcpIndex => "MCP Control Plane",
+                    NavigationTestingIndex => "Testing",
+                    NavigationLogsIndex => "System Logs",
                     _ => "PokéBot"
                 };
             };
@@ -1083,7 +1148,7 @@ namespace SysBot.Pokemon.WinForms
             ConfigureHoverAnimation(btn);
 
             // Select first button by default
-            if (index == 0)
+            if (index == NavigationBotsIndex)
             {
                 var navState = btn.Tag as NavButtonState;
                 navState.IsSelected = true;
@@ -1673,6 +1738,8 @@ namespace SysBot.Pokemon.WinForms
             // Hide all panels
             botsPanel.Visible = false;
             hubPanel.Visible = false;
+            mcpPanel.Visible = false;
+            testingPanel.Visible = false;
             logsPanel.Visible = false;
             
             // Fix z-order to ensure headerPanel is on top
@@ -1686,17 +1753,27 @@ namespace SysBot.Pokemon.WinForms
             // Show the selected panel
             switch (index)
             {
-                case 0:
+                case NavigationBotsIndex:
                     botsPanel.Dock = DockStyle.None;
                     botsPanel.Dock = DockStyle.Fill;
                     botsPanel.Visible = true;
                     break;
-                case 1:
+                case NavigationConfigurationIndex:
                     hubPanel.Dock = DockStyle.None;
                     hubPanel.Dock = DockStyle.Fill;
                     hubPanel.Visible = true;
                     break;
-                case 2:
+                case NavigationMcpIndex:
+                    mcpPanel.Dock = DockStyle.None;
+                    mcpPanel.Dock = DockStyle.Fill;
+                    mcpPanel.Visible = true;
+                    break;
+                case NavigationTestingIndex:
+                    testingPanel.Dock = DockStyle.None;
+                    testingPanel.Dock = DockStyle.Fill;
+                    testingPanel.Visible = true;
+                    break;
+                case NavigationLogsIndex:
                     logsPanel.Dock = DockStyle.None;
                     logsPanel.Dock = DockStyle.Fill;
                     logsPanel.Visible = true;
@@ -1838,6 +1915,8 @@ namespace SysBot.Pokemon.WinForms
         private FlowLayoutPanel navButtonsPanel;
         private Button btnNavBots;
         private Button btnNavHub;
+        private Button btnNavMcp;
+        private Button btnNavTesting;
         private Button btnNavLogs;
         private Panel sidebarBottomPanel;
         private Button btnUpdate;
@@ -1848,6 +1927,8 @@ namespace SysBot.Pokemon.WinForms
         private Button btnReboot;
         private Panel botsPanel;
         private Panel hubPanel;
+        private McpControlPlanePanel mcpPanel;
+        private ControlPlaneTestingPanel testingPanel;
         private Panel logsPanel;
         private Panel botHeaderPanel;
         private Panel addBotPanel;
@@ -1903,6 +1984,8 @@ namespace SysBot.Pokemon.WinForms
         private TabControl TC_Main;
         private TabPage Tab_Bots;
         private TabPage Tab_Hub;
+        private TabPage Tab_Mcp;
+        private TabPage Tab_Testing;
         private TabPage Tab_Logs;
         private Panel ButtonPanel => controlButtonsPanel;
 

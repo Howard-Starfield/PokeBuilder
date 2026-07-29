@@ -30,6 +30,12 @@ namespace SysBot.Pokemon.WinForms
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOZORDER = 0x0004;
         private const uint SWP_FRAMECHANGED = 0x0020;
+        private const int NavigationBotsIndex = 0;
+        private const int NavigationConfigurationIndex = 1;
+        private const int NavigationMcpIndex = 2;
+        private const int NavigationTestingIndex = 3;
+        private const int NavigationLogsIndex = 4;
+        private const int NavigationPanelCount = 5;
         
         // Performance optimization flags
         private bool _suspendLayout = false;
@@ -90,8 +96,11 @@ namespace SysBot.Pokemon.WinForms
             TC_Main = new TabControl { Visible = false };
             Tab_Bots = new TabPage();
             Tab_Hub = new TabPage();
+            Tab_Mcp = new TabPage();
+            Tab_Testing = new TabPage();
             Tab_Logs = new TabPage();
-            TC_Main.TabPages.AddRange([Tab_Bots, Tab_Hub, Tab_Logs]);
+            TC_Main.TabPages.AddRange(
+                [Tab_Bots, Tab_Hub, Tab_Mcp, Tab_Testing, Tab_Logs]);
             TC_Main.SendToBack();
 
             _searchManager = new SearchManager(RTB_Logs, searchStatusLabel);
@@ -901,7 +910,7 @@ namespace SysBot.Pokemon.WinForms
                             btnNavLogs.Invalidate();
                         }
 
-                        TransitionPanels(2);
+                        TransitionPanels(NavigationLogsIndex);
                         titleLabel.Text = "System Logs";
                     }));
 
