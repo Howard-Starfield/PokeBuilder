@@ -33,9 +33,10 @@ namespace SysBot.Pokemon.WinForms
         private const int NavigationBotsIndex = 0;
         private const int NavigationConfigurationIndex = 1;
         private const int NavigationMcpIndex = 2;
-        private const int NavigationTestingIndex = 3;
-        private const int NavigationLogsIndex = 4;
-        private const int NavigationPanelCount = 5;
+        private const int NavigationAutomationIndex = 3;
+        private const int NavigationTestingIndex = 4;
+        private const int NavigationLogsIndex = 5;
+        private const int NavigationPanelCount = 6;
         
         // Performance optimization flags
         private bool _suspendLayout = false;
@@ -58,6 +59,11 @@ namespace SysBot.Pokemon.WinForms
         private readonly object _configSaveLock = new();
         private bool _isFormLoading = true;
         private int _configCategoryHotIndex = ListBox.NoMatches;
+        private string? _lastStartupRegistrationError;
+        private readonly System.Windows.Forms.Timer _configurationSearchTimer;
+        private IReadOnlyList<ConfigurationSearchEntry> _configurationSearchEntries = [];
+        private bool _initializingConfigurationCategories;
+        private int _configurationCategoryBeforeSearch = ListBox.NoMatches;
 
         private SearchManager _searchManager = null!;
         private TextBoxForwarder _textBoxForwarder = null!;
@@ -105,6 +111,17 @@ namespace SysBot.Pokemon.WinForms
 
             _searchManager = new SearchManager(RTB_Logs, searchStatusLabel);
             ConfigureSearchEventHandlers();
+            _configurationSearchTimer = new System.Windows.Forms.Timer
+            {
+                Interval = 160,
+            };
+            components?.Add(_configurationSearchTimer);
+            _configurationSearchTimer.Tick += (_, _) =>
+            {
+                _configurationSearchTimer.Stop();
+                ApplyConfigurationSearch();
+            };
+            configSearchBox.SearchTextChanged += ConfigSearchBox_SearchTextChanged;
         }
 
         private void ConfigureSearchEventHandlers()
@@ -144,6 +161,7 @@ namespace SysBot.Pokemon.WinForms
             Config = loadResult.Config;
             foreach (var message in loadResult.Messages)
                 LogUtil.LogInfo(message, "Config");
+            SynchronizeWindowsStartupRegistration();
 
             LogConfig.MaxArchiveFiles = Config.Hub.MaxArchiveFiles;
             LogConfig.LoggingEnabled = Config.Hub.LoggingEnabled;
@@ -181,6 +199,9 @@ namespace SysBot.Pokemon.WinForms
                 }
             });
             _ = Task.Run(() => McpControlPlaneService.TryStartAsync(this));
+
+            if (Config.Hub.AutoStartBots)
+                StartConfiguredBots(automatic: true);
         }
 
         #region Enhanced Search Implementation
@@ -354,6 +375,8 @@ namespace SysBot.Pokemon.WinForms
                     SaveCurrentConfig();
             };
             InitializeConfigurationCategories();
+            automationPanel.Bind(this);
+            testingPanel.Attach(this);
             ApplyConfigurationFontScale(Config.ConfigurationFontScalePercent);
             DarkModeHelper.ApplyDarkModeToControlTree(PG_Hub);
             ConfigurationPropertyGridTheme.Apply(PG_Hub);
@@ -441,6 +464,18 @@ namespace SysBot.Pokemon.WinForms
         private void AdjustConfigurationFontScale(int delta) =>
             ApplyConfigurationFontScale(Config.ConfigurationFontScalePercent + delta, persist: true);
 
+        private void ConfigSearchBox_SearchTextChanged(object? sender, EventArgs e)
+        {
+            _configurationSearchTimer.Stop();
+            if (string.IsNullOrWhiteSpace(configSearchBox.SearchText))
+            {
+                ApplyConfigurationSearch();
+                return;
+            }
+
+            _configurationSearchTimer.Start();
+        }
+
         private void InitializeConfigurationCategories(string? selectedName = null)
         {
             var hub = RunningEnvironment.Config;
@@ -454,6 +489,23 @@ namespace SysBot.Pokemon.WinForms
                         nameof(BaseConfig.LoggingEnabled),
                         nameof(BaseConfig.MaxArchiveFiles),
                     ])),
+                new("Automation", "Windows launch, bot startup, and scheduled maintenance.",
+                    new PropertySubsetView(hub,
+                    [
+                        nameof(BaseConfig.StartWithWindows),
+                        nameof(BaseConfig.AutoStartBots),
+                        nameof(BaseConfig.ScheduledRestartEnabled),
+                        nameof(BaseConfig.CurrentSystemTime),
+                        nameof(BaseConfig.RestartCronSchedule),
+                    ]),
+                    Actions:
+                    [
+                        new ConfigurationCategoryAction(
+                            "Test self-restart",
+                            "Runs the same graceful restart used by the cron schedule.",
+                            "Test restart now",
+                            TestRestartNowAsync),
+                    ]),
                 new("Discord", "Discord connection, commands, roles, channels, and status settings.", hub.Discord),
                 new("Trade", "Trade behavior, request handling, embeds, limits, and statistics.", hub.Trade),
                 new("Trade Queue", "Queue timing, user priority, and favored-user behavior.",
@@ -497,6 +549,8 @@ namespace SysBot.Pokemon.WinForms
                     UsePropertyGrid: true),
             };
 
+            _configurationSearchEntries = ConfigurationSettingSearch.Build(categories);
+            _initializingConfigurationCategories = true;
             configCategoryList.BeginUpdate();
             try
             {
@@ -510,10 +564,30 @@ namespace SysBot.Pokemon.WinForms
             finally
             {
                 configCategoryList.EndUpdate();
+                _initializingConfigurationCategories = false;
             }
+
+            if (string.IsNullOrWhiteSpace(configSearchBox.SearchText))
+                ShowSelectedConfigurationCategory();
+            else
+                ApplyConfigurationSearch();
         }
 
         private void ConfigCategoryList_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (_initializingConfigurationCategories)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(configSearchBox.SearchText))
+            {
+                configSearchBox.Clear();
+                return;
+            }
+
+            ShowSelectedConfigurationCategory();
+        }
+
+        private void ShowSelectedConfigurationCategory()
         {
             if (configCategoryList.SelectedItem is not ConfigurationCategoryItem selected)
                 return;
@@ -537,13 +611,86 @@ namespace SysBot.Pokemon.WinForms
                     selected.View,
                     Config.ConfigurationFontScalePercent,
                     SaveCurrentConfig,
-                    OpenAllSettings);
+                    OpenAllSettings,
+                    selected.Actions);
             }
             configCategoryList.Invalidate();
         }
 
+        private void ApplyConfigurationSearch()
+        {
+            var query = configSearchBox.SearchText.Trim();
+            if (query.Length == 0)
+            {
+                RestoreConfigurationCategorySelection();
+                ShowSelectedConfigurationCategory();
+                return;
+            }
+
+            var results = ConfigurationSettingSearch.Find(_configurationSearchEntries, query);
+            ClearConfigurationCategorySelectionForSearch();
+            configSectionTitle.Text = "Search results";
+            configSectionDescription.Text = results.Count == 0
+                ? $"No settings match \u201c{query}\u201d."
+                : $"{results.Count} setting{(results.Count == 1 ? string.Empty : "s")} matching \u201c{query}\u201d.";
+            pgContainer.Visible = false;
+            configSettingsTree.Visible = true;
+            configSettingsTree.BringToFront();
+            configSettingsTree.BindSearch(
+                results,
+                query,
+                Config.ConfigurationFontScalePercent,
+                SaveCurrentConfig,
+                OpenAllSettings);
+            configCategoryList.Invalidate();
+        }
+
+        private void ClearConfigurationCategorySelectionForSearch()
+        {
+            if (configCategoryList.SelectedIndex < 0)
+                return;
+
+            _configurationCategoryBeforeSearch = configCategoryList.SelectedIndex;
+            _initializingConfigurationCategories = true;
+            try
+            {
+                configCategoryList.ClearSelected();
+            }
+            finally
+            {
+                _initializingConfigurationCategories = false;
+            }
+        }
+
+        private void RestoreConfigurationCategorySelection()
+        {
+            if (configCategoryList.SelectedIndex >= 0)
+            {
+                _configurationCategoryBeforeSearch = ListBox.NoMatches;
+                return;
+            }
+
+            if (_configurationCategoryBeforeSearch < 0 ||
+                _configurationCategoryBeforeSearch >= configCategoryList.Items.Count)
+                return;
+
+            _initializingConfigurationCategories = true;
+            try
+            {
+                configCategoryList.SelectedIndex = _configurationCategoryBeforeSearch;
+            }
+            finally
+            {
+                _initializingConfigurationCategories = false;
+                _configurationCategoryBeforeSearch = ListBox.NoMatches;
+            }
+        }
+
         private void OpenAllSettings()
         {
+            if (!string.IsNullOrWhiteSpace(configSearchBox.SearchText))
+                configSearchBox.Clear();
+
             for (var index = 0; index < configCategoryList.Items.Count; index++)
             {
                 if (configCategoryList.Items[index] is ConfigurationCategoryItem { UsePropertyGrid: true })
@@ -786,7 +933,7 @@ namespace SysBot.Pokemon.WinForms
             Task.WhenAny(WaitUntilNotRunning(), Task.Delay(5_000)).ConfigureAwait(true).GetAwaiter().GetResult();
         }
 
-        private void SaveCurrentConfig()
+        internal void SaveCurrentConfig()
         {
             try
             {
@@ -795,6 +942,8 @@ namespace SysBot.Pokemon.WinForms
                     var cfg = GetCurrentConfiguration();
                     ProgramConfigPersistence.SaveAtomic(cfg, ConfigLoader.ConfigPath, out _);
                 }
+                SynchronizeWindowsStartupRegistration();
+                WebApi.RestartManager.RefreshScheduleFromConfiguration();
             }
             catch (Exception ex)
             {
@@ -802,37 +951,191 @@ namespace SysBot.Pokemon.WinForms
             }
         }
 
+        private void SynchronizeWindowsStartupRegistration()
+        {
+            var result = WindowsStartupRegistration.Apply(
+                Config.Hub.StartWithWindows,
+                Application.ExecutablePath,
+                ConfigLoader.ConfigPath);
+            if (!result.Success)
+            {
+                if (!string.Equals(_lastStartupRegistrationError, result.Error, StringComparison.Ordinal))
+                {
+                    LogUtil.LogError(
+                        $"Unable to update Windows startup registration: {result.Error}",
+                        "Startup");
+                    _lastStartupRegistrationError = result.Error;
+                }
+                return;
+            }
+
+            _lastStartupRegistrationError = null;
+            if (result.Changed)
+            {
+                var action = Config.Hub.StartWithWindows ? "enabled" : "disabled";
+                LogUtil.LogInfo($"Windows sign-in launch {action}.", "Startup");
+            }
+        }
 
         private void B_Start_Click(object sender, EventArgs e)
         {
-            SaveCurrentConfig();
+            StartConfiguredBots(automatic: false);
+        }
 
-            LogUtil.LogInfo("Form", "Starting all bots...");
-            RunningEnvironment.InitializeStart();
-            WebApiExtensions.NotifyBotsStarted(RunningEnvironment);
-            SendAll(BotControlCommand.Start);
-
-            SetButtonActiveState(btnStart, true);
-            SetButtonActiveState(btnStop, false);
-            SetButtonActiveState(btnReboot, false);
-
-            // Keep the Bots tab selected when starting
-            foreach (Button navBtn in navButtonsPanel.Controls.OfType<Button>())
+        internal async Task TestRestartNowAsync()
+        {
+            if (WebApi.RestartManager.IsRestartInProgress)
             {
-                if (navBtn.Tag is NavButtonState state)
-                {
-                    // Keep Bots tab (index 0) selected, deselect others
-                    state.IsSelected = (state.Index == 0);
-                    navBtn.Invalidate();
-                }
+                WinFormsUtil.Alert("A PokeBot restart is already in progress.");
+                return;
             }
 
-            // Stay on Bots tab instead of switching to Logs
-            TransitionPanels(0);
-            titleLabel.Text = "Bot Management";
+            var botStartupMessage = Config.Hub.AutoStartBots
+                ? "Configured bots will start automatically after PokeBot reopens."
+                : "Configured bots will remain stopped because automatic bot startup is disabled.";
+            var confirmation = WinFormsUtil.Prompt(
+                MessageBoxButtons.YesNo,
+                "Test PokeBot self-restart now?",
+                "Running bots will be idled, detected PokeBot instances will restart, and this window will close.",
+                botStartupMessage);
+            if (confirmation != DialogResult.Yes)
+                return;
 
+            SaveCurrentConfig();
+            var result = await WebApi.RestartManager.TriggerManualRestartAsync();
+            if (!result.Success)
+            {
+                WinFormsUtil.Error(
+                    "PokeBot could not complete the test restart.",
+                    result.Error ?? "The restart manager did not report an error.");
+            }
+        }
+
+        internal string InspectWindowsStartup()
+        {
+            var status = WindowsStartupRegistration.Inspect(
+                Application.ExecutablePath,
+                ConfigLoader.ConfigPath);
+            if (status.Error is { Length: > 0 })
+                return $"FAILED - Windows startup registration could not be read: {status.Error}";
+
+            if (Config.Hub.StartWithWindows)
+            {
+                if (!status.IsRegistered)
+                    return "FAILED - Start with Windows is enabled, but no current-user startup entry exists.";
+                if (!status.MatchesExpectedCommand)
+                    return $"FAILED - The startup entry does not match this executable and config. Registered: {status.RegisteredCommand}";
+
+                return $"PASS - Windows startup is registered for this executable and config. Command: {status.ExpectedCommand}";
+            }
+
+            return status.IsRegistered
+                ? $"WARNING - Start with Windows is disabled, but a startup entry remains: {status.RegisteredCommand}"
+                : "PASS - Start with Windows is disabled and no startup entry remains.";
+        }
+
+        internal string InspectAutomaticBotStartup()
+        {
+            if (!Config.Hub.AutoStartBots)
+                return "DISABLED - configured bots will remain stopped when PokeBot opens.";
+            if (Config.Hub.SkipConsoleBotCreation)
+                return "FAILED - Auto-start is enabled, but Skip Console Bot Creation prevents configured bots from being created.";
             if (Bots.Count == 0)
-                WinFormsUtil.Alert("No bots configured, but all supporting services have been started.");
+                return "NOT READY - Auto-start is enabled, but there are no valid configured bots.";
+
+            return $"PASS - Auto-start is enabled for {Bots.Count} configured bot{(Bots.Count == 1 ? string.Empty : "s")}. " +
+                $"Runtime currently reports {(RunningEnvironment.IsRunning ? "running" : "stopped")}.";
+        }
+
+        internal string InspectRestartSchedule()
+        {
+            var expression = Config.Hub.RestartCronSchedule;
+            if (!CronSchedule.TryParse(expression, out var schedule, out var error))
+                return $"FAILED - cron expression '{expression}' is invalid: {error}";
+
+            var next = schedule!.GetNextOccurrence(DateTime.Now);
+            var prefix = Config.Hub.ScheduledRestartEnabled ? "PASS" : "DISABLED";
+            return $"{prefix} - cron='{expression}'; next local occurrence={next:F}.";
+        }
+
+        internal Task TestConnectedGameRestartAsync()
+        {
+            if (Bots.Count == 0)
+            {
+                WinFormsUtil.Alert("No configured bots are available for a connected-game restart test.");
+                return Task.CompletedTask;
+            }
+
+            var confirmation = WinFormsUtil.Prompt(
+                MessageBoxButtons.YesNo,
+                "Test connected-game restart now?",
+                "Every configured bot will stop, restart its connected game or console, and then resume.",
+                "This uses the existing RESTART action and can interrupt active trades.");
+            if (confirmation == DialogResult.Yes)
+                B_RebootStop_Click(this, EventArgs.Empty);
+
+            return Task.CompletedTask;
+        }
+
+        private void StartConfiguredBots(bool automatic)
+        {
+            if (automatic && Bots.Count == 0)
+            {
+                LogUtil.LogInfo("Automatic bot startup skipped because no valid bots are configured.", "Startup");
+                return;
+            }
+            if (automatic && Config.Hub.SkipConsoleBotCreation)
+            {
+                LogUtil.LogInfo("Automatic bot startup skipped because Skip Console Bot Creation is enabled.", "Startup");
+                return;
+            }
+
+            try
+            {
+                SaveCurrentConfig();
+
+                LogUtil.LogInfo(
+                    automatic ? "Automatically starting configured bots..." : "Starting all bots...",
+                    automatic ? "Startup" : "Form");
+                RunningEnvironment.InitializeStart();
+                WebApiExtensions.NotifyBotsStarted(RunningEnvironment);
+                SendAll(BotControlCommand.Start);
+
+                SetButtonActiveState(btnStart, true);
+                SetButtonActiveState(btnStop, false);
+                SetButtonActiveState(btnReboot, false);
+
+                // Keep the Bots tab selected when starting
+                foreach (Button navBtn in navButtonsPanel.Controls.OfType<Button>())
+                {
+                    if (navBtn.Tag is NavButtonState state)
+                    {
+                        // Keep Bots tab (index 0) selected, deselect others
+                        state.IsSelected = (state.Index == 0);
+                        navBtn.Invalidate();
+                    }
+                }
+
+                // Stay on Bots tab instead of switching to Logs
+                TransitionPanels(NavigationBotsIndex);
+                titleLabel.Text = "Bot Management";
+
+                if (automatic)
+                    LogUtil.LogInfo($"Start command issued to {Bots.Count} configured bot{(Bots.Count == 1 ? string.Empty : "s")}.", "Startup");
+                else if (Bots.Count == 0)
+                    WinFormsUtil.Alert("No bots configured, but all supporting services have been started.");
+            }
+            catch (Exception ex)
+            {
+                SetButtonActiveState(btnStart, false);
+                SetButtonActiveState(btnStop, false);
+                SetButtonActiveState(btnReboot, false);
+                LogUtil.LogError(
+                    $"{(automatic ? "Automatic bot startup" : "Bot startup")} failed: {ex.Message}",
+                    automatic ? "Startup" : "Form");
+                if (!automatic)
+                    WinFormsUtil.Error($"Unable to start bots: {ex.Message}");
+            }
         }
 
         private void B_RebootStop_Click(object sender, EventArgs e)

@@ -24,7 +24,7 @@ public sealed class ControlPlaneWinFormsContractTests
     }
 
     [Fact]
-    public void LeftNavigation_WiresMcpAndTestingButtonsToRealPanels()
+    public void LeftNavigation_WiresMcpAutomationAndTestingButtonsToRealPanels()
     {
         var main = ReadSource("SysBot.Pokemon.WinForms", "Main.cs");
         var designer = ReadSource(
@@ -32,22 +32,28 @@ public sealed class ControlPlaneWinFormsContractTests
             "Main.Designer.cs");
 
         main.Should().Contain("NavigationMcpIndex = 2");
-        main.Should().Contain("NavigationTestingIndex = 3");
-        main.Should().Contain("NavigationLogsIndex = 4");
+        main.Should().Contain("NavigationAutomationIndex = 3");
+        main.Should().Contain("NavigationTestingIndex = 4");
+        main.Should().Contain("NavigationLogsIndex = 5");
         designer.Should().Contain("navButtonsPanel.Controls.Add(btnNavMcp);");
+        designer.Should().Contain("navButtonsPanel.Controls.Add(btnNavAutomation);");
         designer.Should().Contain("navButtonsPanel.Controls.Add(btnNavTesting);");
         designer.Should().Contain("case NavigationMcpIndex:");
         designer.Should().Contain("mcpPanel.Visible = true;");
+        designer.Should().Contain("case NavigationAutomationIndex:");
+        designer.Should().Contain("automationPanel.Visible = true;");
         designer.Should().Contain("case NavigationTestingIndex:");
         designer.Should().Contain("testingPanel.Visible = true;");
         designer.Should().Contain(
             "private McpControlPlanePanel mcpPanel;");
         designer.Should().Contain(
+            "private AutomationControlPanel automationPanel;");
+        designer.Should().Contain(
             "private ControlPlaneTestingPanel testingPanel;");
     }
 
     [Fact]
-    public void TestingPanel_UsesOnlyReadOnlyControlPlaneChecks()
+    public void TestingPanel_CoversDiagnosticsAndConfirmedRestartActions()
     {
         var source = ReadSource(
             "SysBot.Pokemon.WinForms",
@@ -55,7 +61,14 @@ public sealed class ControlPlaneWinFormsContractTests
 
         source.Should().Contain("GetAsync(status.HealthEndpoint)");
         source.Should().Contain("api.ListBotInstances(");
-        source.Should().Contain("These tests do not enqueue or trade");
+        source.Should().Contain("TEST WINDOWS STARTUP");
+        source.Should().Contain("TEST BOT AUTO-START");
+        source.Should().Contain("TEST RESTART SCHEDULE");
+        source.Should().Contain("TEST POKEBOT RESTART");
+        source.Should().Contain("TEST GAME RESTART");
+        source.Should().Contain("main.TestRestartNowAsync()");
+        source.Should().Contain("main.TestConnectedGameRestartAsync()");
+        source.Should().Contain("always require confirmation");
         source.Should().NotContain("CreateTradePlan(");
         source.Should().NotContain("EnqueueTradePlan(");
         source.Should().NotContain("CancelTradeOperation(");

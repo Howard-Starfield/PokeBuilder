@@ -310,6 +310,91 @@ internal sealed class McpControlPlanePanel : UserControl
     }
 }
 
+internal sealed class AutomationControlPanel : UserControl
+{
+    private readonly ConfigurationSettingsTree _settings;
+    private Main? _main;
+
+    public AutomationControlPanel()
+    {
+        AccessibleName = "Startup and restart automation";
+        BackColor = ConfigurationTheme.Canvas;
+
+        var heading = new Label
+        {
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 13F),
+            ForeColor = ConfigurationTheme.TextPrimary,
+            Location = new Point(18, 18),
+            Text = "AUTOMATION & RESTARTS",
+        };
+        var description = new Label
+        {
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            AutoEllipsis = true,
+            Font = new Font("Segoe UI", 9F),
+            ForeColor = ConfigurationTheme.TextMuted,
+            Location = new Point(18, 50),
+            Size = new Size(790, 38),
+            Text = "Persist PokeBot across Windows sign-in, start configured bots automatically, and schedule maintenance restarts.",
+        };
+
+        _settings = new ConfigurationSettingsTree
+        {
+            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            Location = new Point(18, 92),
+            Size = new Size(800, 418),
+        };
+
+        Controls.Add(heading);
+        Controls.Add(description);
+        Controls.Add(_settings);
+        VisibleChanged += (_, _) =>
+        {
+            if (Visible)
+                BindSettings();
+        };
+    }
+
+    public void Bind(Main main)
+    {
+        _main = main;
+        BindSettings();
+    }
+
+    private void BindSettings()
+    {
+        if (_main is null || _main.Config is null)
+            return;
+
+        var hub = _main.Config.Hub;
+        _settings.Bind(
+            new PropertySubsetView(hub,
+            [
+                nameof(BaseConfig.StartWithWindows),
+                nameof(BaseConfig.AutoStartBots),
+                nameof(BaseConfig.ScheduledRestartEnabled),
+                nameof(BaseConfig.CurrentSystemTime),
+                nameof(BaseConfig.RestartCronSchedule),
+            ]),
+            _main.Config.ConfigurationFontScalePercent,
+            _main.SaveCurrentConfig,
+            () => { },
+            [
+                new ConfigurationCategoryAction(
+                    "PokeBot self-restart",
+                    "Runs the same graceful self-restart used by the cron schedule.",
+                    "Test PokeBot restart",
+                    _main.TestRestartNowAsync),
+                new ConfigurationCategoryAction(
+                    "Connected-game restart",
+                    "Restarts each connected game or console, then resumes its bot.",
+                    "Test game restart",
+                    _main.TestConnectedGameRestartAsync),
+            ]);
+    }
+}
+
 internal sealed class ControlPlaneTestingPanel : UserControl
 {
     private static readonly HttpClient HealthClient = new()
@@ -320,10 +405,11 @@ internal sealed class ControlPlaneTestingPanel : UserControl
     private readonly Button _healthButton;
     private readonly Button _runtimeButton;
     private readonly RichTextBox _results;
+    private Main? _main;
 
     public ControlPlaneTestingPanel()
     {
-        AccessibleName = "MCP and runtime testing";
+        AccessibleName = "MCP, startup, and restart testing";
         BackColor = Color.Transparent;
         Padding = new Padding(18);
 
@@ -333,7 +419,7 @@ internal sealed class ControlPlaneTestingPanel : UserControl
             Font = new Font("Segoe UI Semibold", 13F),
             ForeColor = ConfigurationTheme.TextPrimary,
             Location = new Point(18, 18),
-            Text = "CONTROL-PLANE TESTING",
+            Text = "SYSTEM TESTING",
         };
         var description = new Label
         {
@@ -343,7 +429,7 @@ internal sealed class ControlPlaneTestingPanel : UserControl
             ForeColor = ConfigurationTheme.TextMuted,
             Location = new Point(18, 50),
             Size = new Size(790, 38),
-            Text = "Read-only checks for the local MCP listener and the current SysBot runtime. These tests do not enqueue or trade Pokémon.",
+            Text = "Inspect MCP and automation readiness. Restart tests always require confirmation before changing runtime state.",
         };
 
         var actions = new FlowLayoutPanel
@@ -353,16 +439,35 @@ internal sealed class ControlPlaneTestingPanel : UserControl
             FlowDirection = FlowDirection.LeftToRight,
             Location = new Point(18, 98),
             Padding = new Padding(10),
-            Size = new Size(800, 58),
-            WrapContents = false,
+            Size = new Size(800, 106),
+            WrapContents = true,
         };
         _healthButton = CreateButton("TEST MCP HEALTH");
         _healthButton.Click += async (_, _) => await RunHealthCheckAsync();
         _runtimeButton = CreateButton("INSPECT BOT RUNTIME");
         _runtimeButton.Click += (_, _) => InspectRuntime();
+        var windowsStartupButton = CreateButton("TEST WINDOWS STARTUP");
+        windowsStartupButton.Click += (_, _) => RunMainDiagnostic("WINDOWS STARTUP", main => main.InspectWindowsStartup());
+        var botStartupButton = CreateButton("TEST BOT AUTO-START");
+        botStartupButton.Click += (_, _) => RunMainDiagnostic("BOT AUTO-START", main => main.InspectAutomaticBotStartup());
+        var scheduleButton = CreateButton("TEST RESTART SCHEDULE");
+        scheduleButton.Click += (_, _) => RunMainDiagnostic("RESTART SCHEDULE", main => main.InspectRestartSchedule());
+        var pokeBotRestartButton = CreateButton("TEST POKEBOT RESTART");
+        pokeBotRestartButton.Click += async (_, _) => await RunConfirmedActionAsync(
+            "POKEBOT RESTART",
+            main => main.TestRestartNowAsync());
+        var gameRestartButton = CreateButton("TEST GAME RESTART");
+        gameRestartButton.Click += async (_, _) => await RunConfirmedActionAsync(
+            "CONNECTED-GAME RESTART",
+            main => main.TestConnectedGameRestartAsync());
         var clearButton = CreateButton("CLEAR");
         actions.Controls.Add(_healthButton);
         actions.Controls.Add(_runtimeButton);
+        actions.Controls.Add(windowsStartupButton);
+        actions.Controls.Add(botStartupButton);
+        actions.Controls.Add(scheduleButton);
+        actions.Controls.Add(pokeBotRestartButton);
+        actions.Controls.Add(gameRestartButton);
         actions.Controls.Add(clearButton);
 
         _results = new RichTextBox
@@ -372,10 +477,10 @@ internal sealed class ControlPlaneTestingPanel : UserControl
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Consolas", 9F),
             ForeColor = ConfigurationTheme.TextPrimary,
-            Location = new Point(18, 170),
+            Location = new Point(18, 218),
             ReadOnly = true,
-            Size = new Size(800, 340),
-            Text = "Select a read-only test above.\n",
+            Size = new Size(800, 292),
+            Text = "Select a test above. Runtime-changing tests will ask for confirmation.\n",
         };
         clearButton.Click += (_, _) => _results.Clear();
 
@@ -384,6 +489,8 @@ internal sealed class ControlPlaneTestingPanel : UserControl
         Controls.Add(actions);
         Controls.Add(_results);
     }
+
+    public void Attach(Main main) => _main = main;
 
     private async Task RunHealthCheckAsync()
     {
@@ -461,6 +568,43 @@ internal sealed class ControlPlaneTestingPanel : UserControl
         }
     }
 
+    private void RunMainDiagnostic(string test, Func<Main, string> diagnostic)
+    {
+        if (_main is null)
+        {
+            AppendResult(test, "NOT READY - the main window has not attached its runtime.");
+            return;
+        }
+
+        try
+        {
+            AppendResult(test, diagnostic(_main));
+        }
+        catch (Exception ex)
+        {
+            AppendResult(test, $"FAILED - {ex.Message}");
+        }
+    }
+
+    private async Task RunConfirmedActionAsync(string test, Func<Main, Task> action)
+    {
+        if (_main is null)
+        {
+            AppendResult(test, "NOT READY - the main window has not attached its runtime.");
+            return;
+        }
+
+        try
+        {
+            AppendResult(test, "Confirmation dialog opened.");
+            await action(_main);
+        }
+        catch (Exception ex)
+        {
+            AppendResult(test, $"FAILED - {ex.Message}");
+        }
+    }
+
     private void AppendResult(string test, string result)
     {
         _results.AppendText(
@@ -480,10 +624,10 @@ internal sealed class ControlPlaneTestingPanel : UserControl
             ForeColor = ConfigurationTheme.TextPrimary,
             Height = 34,
             Margin = new Padding(4),
-            Padding = new Padding(12, 0, 12, 0),
+            Padding = new Padding(10, 0, 10, 0),
             Text = text,
             UseVisualStyleBackColor = false,
-            Width = text == "CLEAR" ? 90 : 180,
+            Width = text == "CLEAR" ? 82 : 178,
         };
         button.FlatAppearance.BorderColor = ConfigurationTheme.BorderStrong;
         button.FlatAppearance.MouseOverBackColor = ConfigurationTheme.SurfaceHover;

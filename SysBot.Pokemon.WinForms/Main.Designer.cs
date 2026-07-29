@@ -55,6 +55,7 @@ namespace SysBot.Pokemon.WinForms
             btnNavBots = new Button();
             btnNavHub = new Button();
             btnNavMcp = new Button();
+            btnNavAutomation = new Button();
             btnNavTesting = new Button();
             btnNavLogs = new Button();
             sidebarBottomPanel = new Panel();
@@ -70,6 +71,7 @@ namespace SysBot.Pokemon.WinForms
             botsPanel = new Panel();
             hubPanel = new Panel();
             mcpPanel = new McpControlPlanePanel();
+            automationPanel = new AutomationControlPanel();
             testingPanel = new ControlPlaneTestingPanel();
             logsPanel = new Panel();
 
@@ -87,6 +89,7 @@ namespace SysBot.Pokemon.WinForms
             configThemeMark = new Panel();
             configToolbarTitle = new Label();
             configToolbarSubtitle = new Label();
+            configSearchBox = new ConfigurationSearchBox();
             configTextSizeControlsPanel = new FlowLayoutPanel();
             configTextSizeCaption = new Label();
             btnConfigFontDecrease = new Button();
@@ -209,6 +212,7 @@ namespace SysBot.Pokemon.WinForms
             navButtonsPanel.Controls.Add(btnNavBots);
             navButtonsPanel.Controls.Add(btnNavHub);
             navButtonsPanel.Controls.Add(btnNavMcp);
+            navButtonsPanel.Controls.Add(btnNavAutomation);
             navButtonsPanel.Controls.Add(btnNavTesting);
             navButtonsPanel.Controls.Add(btnNavLogs);
             navButtonsPanel.Dock = DockStyle.Fill;
@@ -243,10 +247,16 @@ namespace SysBot.Pokemon.WinForms
                 "View MCP control-plane status",
                 pokeBallAccent);
             ConfigureNavButton(
+                btnNavAutomation,
+                "AUTOMATION",
+                NavigationAutomationIndex,
+                "Persistent startup and restart scheduling",
+                pokeBallAccent);
+            ConfigureNavButton(
                 btnNavTesting,
                 "TESTING",
                 NavigationTestingIndex,
-                "Run read-only MCP and runtime tests",
+                "Run MCP, startup, and restart tests",
                 pokeBallAccent);
             ConfigureNavButton(
                 btnNavLogs,
@@ -327,6 +337,7 @@ namespace SysBot.Pokemon.WinForms
             contentPanel.Controls.Add(botsPanel);
             contentPanel.Controls.Add(hubPanel);
             contentPanel.Controls.Add(mcpPanel);
+            contentPanel.Controls.Add(automationPanel);
             contentPanel.Controls.Add(testingPanel);
             contentPanel.Controls.Add(logsPanel);
             contentPanel.Controls.Add(headerPanel);
@@ -505,6 +516,7 @@ namespace SysBot.Pokemon.WinForms
             configToolbarPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             configToolbarPanel.BackColor = ConfigurationTheme.Surface;
             configToolbarPanel.Controls.Add(configTextSizeControlsPanel);
+            configToolbarPanel.Controls.Add(configSearchBox);
             configToolbarPanel.Controls.Add(configToolbarSubtitle);
             configToolbarPanel.Controls.Add(configToolbarTitle);
             configToolbarPanel.Controls.Add(configThemeMark);
@@ -537,6 +549,13 @@ namespace SysBot.Pokemon.WinForms
             configToolbarSubtitle.Name = "configToolbarSubtitle";
             configToolbarSubtitle.Text = "Readable settings, saved to config.json";
 
+            configSearchBox.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            configSearchBox.BackColor = ConfigurationTheme.Canvas;
+            configSearchBox.Location = new Point(292, 12);
+            configSearchBox.Name = "configSearchBox";
+            configSearchBox.Size = new Size(243, 34);
+            configSearchBox.TabIndex = 1;
+
             configTextSizeControlsPanel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             configTextSizeControlsPanel.BackColor = Color.Transparent;
             configTextSizeControlsPanel.Controls.Add(configTextSizeCaption);
@@ -548,7 +567,7 @@ namespace SysBot.Pokemon.WinForms
             configTextSizeControlsPanel.Location = new Point(551, 12);
             configTextSizeControlsPanel.Name = "configTextSizeControlsPanel";
             configTextSizeControlsPanel.Size = new Size(275, 34);
-            configTextSizeControlsPanel.TabIndex = 1;
+            configTextSizeControlsPanel.TabIndex = 2;
             configTextSizeControlsPanel.WrapContents = false;
 
             configTextSizeCaption.AutoSize = false;
@@ -718,6 +737,14 @@ namespace SysBot.Pokemon.WinForms
             mcpPanel.TabIndex = NavigationMcpIndex;
             mcpPanel.Visible = false;
 
+            // Automation Panel
+            automationPanel.Dock = DockStyle.Fill;
+            automationPanel.Location = new Point(0, 60);
+            automationPanel.Name = "automationPanel";
+            automationPanel.Size = new Size(860, 540);
+            automationPanel.TabIndex = NavigationAutomationIndex;
+            automationPanel.Visible = false;
+
             // Testing Panel
             testingPanel.Dock = DockStyle.Fill;
             testingPanel.Location = new Point(0, 60);
@@ -864,11 +891,13 @@ namespace SysBot.Pokemon.WinForms
             Tab_Bots = new TabPage();
             Tab_Hub = new TabPage();
             Tab_Mcp = new TabPage();
+            Tab_Automation = new TabPage();
             Tab_Testing = new TabPage();
             Tab_Logs = new TabPage();
             TC_Main.TabPages.Add(Tab_Bots);
             TC_Main.TabPages.Add(Tab_Hub);
             TC_Main.TabPages.Add(Tab_Mcp);
+            TC_Main.TabPages.Add(Tab_Automation);
             TC_Main.TabPages.Add(Tab_Testing);
             TC_Main.TabPages.Add(Tab_Logs);
             TC_Main.SendToBack();
@@ -1094,6 +1123,7 @@ namespace SysBot.Pokemon.WinForms
                     NavigationBotsIndex => "\uE77B", // Bots icon
                     NavigationConfigurationIndex => "\uE713", // Settings icon
                     NavigationMcpIndex => "\uE968", // Connected service icon
+                    NavigationAutomationIndex => "\uE823", // Restart and automation icon
                     NavigationTestingIndex => "\uE9D9", // Developer tools icon
                     NavigationLogsIndex => "\uE7C3", // Logs icon
                     NavigationPanelCount => "\uE74A", // Minimize to tray
@@ -1139,6 +1169,7 @@ namespace SysBot.Pokemon.WinForms
                     NavigationBotsIndex => "Bot Management",
                     NavigationConfigurationIndex => "Configuration",
                     NavigationMcpIndex => "MCP Control Plane",
+                    NavigationAutomationIndex => "Automation & Restarts",
                     NavigationTestingIndex => "Testing",
                     NavigationLogsIndex => "System Logs",
                     _ => "PokéBot"
@@ -1739,6 +1770,7 @@ namespace SysBot.Pokemon.WinForms
             botsPanel.Visible = false;
             hubPanel.Visible = false;
             mcpPanel.Visible = false;
+            automationPanel.Visible = false;
             testingPanel.Visible = false;
             logsPanel.Visible = false;
             
@@ -1767,6 +1799,11 @@ namespace SysBot.Pokemon.WinForms
                     mcpPanel.Dock = DockStyle.None;
                     mcpPanel.Dock = DockStyle.Fill;
                     mcpPanel.Visible = true;
+                    break;
+                case NavigationAutomationIndex:
+                    automationPanel.Dock = DockStyle.None;
+                    automationPanel.Dock = DockStyle.Fill;
+                    automationPanel.Visible = true;
                     break;
                 case NavigationTestingIndex:
                     testingPanel.Dock = DockStyle.None;
@@ -1916,6 +1953,7 @@ namespace SysBot.Pokemon.WinForms
         private Button btnNavBots;
         private Button btnNavHub;
         private Button btnNavMcp;
+        private Button btnNavAutomation;
         private Button btnNavTesting;
         private Button btnNavLogs;
         private Panel sidebarBottomPanel;
@@ -1928,6 +1966,7 @@ namespace SysBot.Pokemon.WinForms
         private Panel botsPanel;
         private Panel hubPanel;
         private McpControlPlanePanel mcpPanel;
+        private AutomationControlPanel automationPanel;
         private ControlPlaneTestingPanel testingPanel;
         private Panel logsPanel;
         private Panel botHeaderPanel;
@@ -1945,6 +1984,7 @@ namespace SysBot.Pokemon.WinForms
         private Panel configThemeMark;
         private Label configToolbarTitle;
         private Label configToolbarSubtitle;
+        private ConfigurationSearchBox configSearchBox;
         private FlowLayoutPanel configTextSizeControlsPanel;
         private Label configTextSizeCaption;
         private Button btnConfigFontDecrease;
@@ -1985,6 +2025,7 @@ namespace SysBot.Pokemon.WinForms
         private TabPage Tab_Bots;
         private TabPage Tab_Hub;
         private TabPage Tab_Mcp;
+        private TabPage Tab_Automation;
         private TabPage Tab_Testing;
         private TabPage Tab_Logs;
         private Panel ButtonPanel => controlButtonsPanel;

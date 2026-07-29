@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using SysBot.Base;
+using SysBot.Pokemon.Helpers;
 
 namespace SysBot.Pokemon.WinForms.WebApi;
 
@@ -25,12 +26,12 @@ public static class RestartManager
     private static CancellationTokenSource? _restartCts;
     private static Main? _mainForm;
     private static int _tcpPort;
+    private static bool _scheduleOwner;
     
     // Consolidated file paths
     private static string WorkingDirectory => Path.GetDirectoryName(Application.ExecutablePath) ?? Environment.CurrentDirectory;
     private static string ScheduleConfigPath => Path.Combine(WorkingDirectory, "restart_schedule.json");
     private static string RestartFlagPath => Path.Combine(WorkingDirectory, "restart_in_progress.flag");
-    private static string LastRestartPath => Path.Combine(WorkingDirectory, "last_restart.txt");
     private static string PreRestartPidsPath => Path.Combine(WorkingDirectory, "pre_restart_pids.json");
     #endregion
 
@@ -52,15 +53,21 @@ public static class RestartManager
     #endregion
 
     #region Initialization
-    public static void Initialize(Main mainForm, int tcpPort)
+    public static void Initialize(Main mainForm, int tcpPort, bool scheduleOwner)
     {
         _mainForm = mainForm ?? throw new ArgumentNullException(nameof(mainForm));
         _tcpPort = tcpPort;
+        _scheduleOwner = scheduleOwner;
         
         CheckPostRestartStartup();
+        TryMigrateLegacySchedule();
         InitializeScheduledRestarts();
         
-        LogUtil.LogInfo("RestartManager", "RestartManager initialized successfully");
+        LogUtil.LogInfo(
+            "RestartManager",
+            scheduleOwner
+                ? "RestartManager initialized with scheduled-restart ownership"
+                : "RestartManager initialized without scheduled-restart ownership");
     }
 
     public static void Shutdown()
@@ -72,6 +79,9 @@ public static class RestartManager
             _restartCts?.Cancel();
             _restartCts = null;
             _currentState = RestartState.Idle;
+            _nextScheduledRestart = null;
+            _mainForm = null;
+            _scheduleOwner = false;
         }
         
         LogUtil.LogInfo("RestartManager", "RestartManager shutdown completed");
@@ -81,106 +91,84 @@ public static class RestartManager
     #region Scheduled Restart Management
     public static void InitializeScheduledRestarts()
     {
-        // Load existing config and set up timer if enabled
-        var config = GetScheduleConfig();
-        if (config.Enabled)
-        {
-            UpdateScheduleTimerWithConfig(config);
-        }
+        RefreshScheduleFromConfiguration();
     }
 
     public static RestartScheduleConfig GetScheduleConfig()
     {
-        try
-        {
-            if (File.Exists(ScheduleConfigPath))
-            {
-                var json = File.ReadAllText(ScheduleConfigPath);
-                var config = JsonSerializer.Deserialize<RestartScheduleConfig>(json);
-                if (config != null)
-                {
-                    LogUtil.LogInfo("RestartManager", $"Loaded restart schedule from file: Enabled={config.Enabled}, Time={config.Time}");
-                    return config;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            LogUtil.LogError("RestartManager", $"Failed to load restart schedule: {ex.Message}");
-        }
-
-        // No config file exists - create and save default config
-        var defaultConfig = new RestartScheduleConfig();
-        try
-        {
-            var json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(ScheduleConfigPath, json);
-            LogUtil.LogInfo("RestartManager", "Created default restart schedule config file");
-        }
-        catch (Exception ex)
-        {
-            LogUtil.LogError("RestartManager", $"Failed to save default restart schedule: {ex.Message}");
-        }
-
-        return defaultConfig;
+        var hub = _mainForm?.Config.Hub;
+        return hub is null
+            ? new RestartScheduleConfig()
+            : RestartScheduleConfig.FromHub(hub);
     }
 
     public static void UpdateScheduleConfig(RestartScheduleConfig config)
     {
-        try
-        {
-            // Save configuration first
-            var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(ScheduleConfigPath, json);
-            LogUtil.LogInfo("RestartManager", $"Saved restart schedule to file: Enabled={config.Enabled}, Time={config.Time}");
+        ArgumentNullException.ThrowIfNull(config);
+        var mainForm = _mainForm ?? throw new InvalidOperationException("RestartManager has not been initialized.");
+        var cron = config.ResolveCronExpression();
+        CronSchedule.Parse(cron);
 
-            // Clear any existing timer before updating
-            lock (_stateLock)
-            {
-                if (_scheduleTimer != null)
-                {
-                    _scheduleTimer.Change(Timeout.Infinite, Timeout.Infinite);
-                    _scheduleTimer.Dispose();
-                    _scheduleTimer = null;
-                }
-                _nextScheduledRestart = null;
-            }
-
-            // Only update timer if enabled
-            if (config.Enabled)
-            {
-                UpdateScheduleTimerWithConfig(config);
-                LogUtil.LogInfo("RestartManager", $"Restart schedule timer activated for {config.Time}");
-            }
-            else
-            {
-                LogUtil.LogInfo("RestartManager", "Restart schedule disabled - timer cleared");
-            }
-        }
-        catch (Exception ex)
+        void Apply()
         {
-            LogUtil.LogError("RestartManager", $"Failed to update restart schedule: {ex.Message}");
-            throw;
+            mainForm.Config.Hub.ScheduledRestartEnabled = config.Enabled;
+            mainForm.Config.Hub.RestartCronSchedule = cron;
+            mainForm.SaveCurrentConfig();
         }
+
+        if (mainForm.InvokeRequired)
+            mainForm.Invoke((Action)Apply);
+        else
+            Apply();
+
+        LogUtil.LogInfo(
+            "RestartManager",
+            config.Enabled
+                ? $"Saved restart schedule to the main configuration: {cron}"
+                : "Disabled the restart schedule in the main configuration");
+    }
+
+    public static void RefreshScheduleFromConfiguration()
+    {
+        if (_mainForm is null)
+            return;
+
+        if (!_scheduleOwner)
+        {
+            ClearScheduleTimer();
+            return;
+        }
+
+        UpdateScheduleTimerWithConfig(GetScheduleConfig());
     }
 
     private static void UpdateScheduleTimer()
     {
-        var config = GetScheduleConfig();
-        UpdateScheduleTimerWithConfig(config);
+        RefreshScheduleFromConfiguration();
     }
 
     private static void UpdateScheduleTimerWithConfig(RestartScheduleConfig config)
     {
+        DateTime? nextRestart = null;
+        string? scheduleError = null;
+        if (config.Enabled)
+        {
+            try
+            {
+                nextRestart = CronSchedule
+                    .Parse(config.ResolveCronExpression())
+                    .GetNextOccurrence(DateTime.Now);
+            }
+            catch (Exception ex) when (ex is FormatException or InvalidOperationException)
+            {
+                scheduleError = ex.Message;
+            }
+        }
+
         lock (_stateLock)
         {
-            // Properly dispose of existing timer first
-            if (_scheduleTimer != null)
-            {
-                _scheduleTimer.Change(Timeout.Infinite, Timeout.Infinite);
-                _scheduleTimer.Dispose();
-                _scheduleTimer = null;
-            }
+            _scheduleTimer?.Dispose();
+            _scheduleTimer = null;
             _nextScheduledRestart = null;
 
             if (!config.Enabled)
@@ -189,50 +177,61 @@ public static class RestartManager
                 return;
             }
 
-            if (!TimeSpan.TryParse(config.Time, out var scheduledTime))
+            if (scheduleError is not null || nextRestart is null)
             {
-                LogUtil.LogError("RestartManager", $"Invalid schedule time format: {config.Time}");
+                LogUtil.LogError(
+                    "RestartManager",
+                    $"Invalid restart cron schedule '{config.ResolveCronExpression()}': {scheduleError}");
                 return;
             }
 
-            var nextRestart = CalculateNextRestartTime(scheduledTime);
             _nextScheduledRestart = nextRestart;
 
-            var delay = nextRestart - DateTime.Now;
+            var delay = nextRestart.Value - DateTime.Now;
             if (delay.TotalMilliseconds > 0)
             {
-                _scheduleTimer = new System.Threading.Timer(OnScheduledRestart, null, delay, Timeout.InfiniteTimeSpan);
-                LogUtil.LogInfo("RestartManager", $"Next scheduled restart: {nextRestart:yyyy-MM-dd HH:mm:ss} (in {delay.TotalHours:F1} hours)");
+                var timerDelay = delay > TimeSpan.FromDays(1) ? TimeSpan.FromDays(1) : delay;
+                _scheduleTimer = new System.Threading.Timer(
+                    OnScheduleTimerElapsed,
+                    null,
+                    timerDelay,
+                    Timeout.InfiniteTimeSpan);
+                LogUtil.LogInfo(
+                    "RestartManager",
+                    $"Next scheduled restart: {nextRestart:yyyy-MM-dd HH:mm:ss} ({config.ResolveCronExpression()})");
             }
         }
     }
 
-    private static DateTime CalculateNextRestartTime(TimeSpan scheduledTime)
+    private static void ClearScheduleTimer()
     {
-        var now = DateTime.Now;
-        var today = now.Date.Add(scheduledTime);
-        
-        // If today's time has passed, schedule for tomorrow
-        if (today <= now)
+        lock (_stateLock)
         {
-            today = today.AddDays(1);
+            _scheduleTimer?.Dispose();
+            _scheduleTimer = null;
+            _nextScheduledRestart = null;
         }
-        
-        return today;
+    }
+
+    private static void OnScheduleTimerElapsed(object? state)
+    {
+        DateTime? scheduled;
+        lock (_stateLock)
+            scheduled = _nextScheduledRestart;
+
+        if (scheduled is null || DateTime.Now.AddSeconds(1) < scheduled.Value)
+        {
+            UpdateScheduleTimer();
+            return;
+        }
+
+        OnScheduledRestart(state);
     }
 
     private static void OnScheduledRestart(object? state)
     {
         try
         {
-            // Check if we already restarted today
-            if (WasRestartedToday())
-            {
-                LogUtil.LogInfo("RestartManager", "Restart already performed today, skipping scheduled restart");
-                UpdateScheduleTimer(); // Schedule next restart
-                return;
-            }
-
             LogUtil.LogInfo("RestartManager", "Executing scheduled restart");
             
             // Start the restart process asynchronously
@@ -259,32 +258,62 @@ public static class RestartManager
         }
     }
 
-    private static bool WasRestartedToday()
+    private static void TryMigrateLegacySchedule()
     {
         try
         {
-            if (File.Exists(LastRestartPath))
+            if (_mainForm is null ||
+                !File.Exists(ScheduleConfigPath) ||
+                MainConfigContainsRestartSchedule())
             {
-                var lastRestart = File.ReadAllText(LastRestartPath).Trim();
-                return lastRestart == DateTime.Now.ToString("yyyy-MM-dd");
+                return;
             }
+            var mainForm = _mainForm;
+
+            var json = File.ReadAllText(ScheduleConfigPath);
+            var legacy = JsonSerializer.Deserialize<RestartScheduleConfig>(json);
+            if (legacy is null || !legacy.Enabled)
+                return;
+
+            var cron = legacy.ResolveCronExpression();
+            CronSchedule.Parse(cron);
+
+            void Apply()
+            {
+                mainForm.Config.Hub.ScheduledRestartEnabled = true;
+                mainForm.Config.Hub.RestartCronSchedule = cron;
+                mainForm.SaveCurrentConfig();
+            }
+
+            if (mainForm.InvokeRequired)
+                mainForm.Invoke((Action)Apply);
+            else
+                Apply();
+
+            LogUtil.LogInfo(
+                "RestartManager",
+                $"Migrated legacy restart_schedule.json to the Automation settings using cron '{cron}'.");
         }
         catch (Exception ex)
         {
-            LogUtil.LogError("RestartManager", $"Failed to check last restart date: {ex.Message}");
+            LogUtil.LogError("RestartManager", $"Failed to migrate legacy restart schedule: {ex.Message}");
         }
-        return false;
     }
 
-    private static void RecordRestartDate()
+    private static bool MainConfigContainsRestartSchedule()
     {
         try
         {
-            File.WriteAllText(LastRestartPath, DateTime.Now.ToString("yyyy-MM-dd"));
+            if (!File.Exists(ConfigLoader.ConfigPath))
+                return false;
+
+            using var document = JsonDocument.Parse(File.ReadAllText(ConfigLoader.ConfigPath));
+            return document.RootElement.TryGetProperty(nameof(ProgramConfig.Hub), out var hub) &&
+                   hub.TryGetProperty(nameof(BaseConfig.ScheduledRestartEnabled), out _);
         }
-        catch (Exception ex)
+        catch
         {
-            LogUtil.LogError("RestartManager", $"Failed to record restart date: {ex.Message}");
+            return false;
         }
     }
     #endregion
@@ -353,8 +382,6 @@ public static class RestartManager
                 await RestartMasterInstanceAsync(result);
             }
 
-            // Record successful restart
-            RecordRestartDate();
             result.Success = true;
             
             LogUtil.LogInfo("RestartManager", $"{reason} restart completed successfully");
@@ -808,14 +835,16 @@ public static class RestartManager
             if (!File.Exists(RestartFlagPath))
                 return;
 
-            LogUtil.LogInfo("RestartManager", "Post-restart startup detected. Initiating startup sequence...");
+            LogUtil.LogInfo("RestartManager", "Post-restart startup detected. Cleaning up the previous process...");
             File.Delete(RestartFlagPath);
             
             // Kill any lingering old processes
             KillOldProcesses();
-
-            // Start the post-restart sequence asynchronously
-            Task.Run(() => ExecutePostRestartSequenceAsync());
+            LogUtil.LogInfo(
+                "RestartManager",
+                _mainForm?.Config.Hub.AutoStartBots == true
+                    ? "Configured bots are started by the main startup sequence."
+                    : "Automatic bot startup is disabled; bots will remain stopped.");
         }
         catch (Exception ex)
         {
@@ -881,101 +910,6 @@ public static class RestartManager
             LogUtil.LogError("RestartManager", $"Error killing old processes: {ex.Message}");
         }
     }
-    
-    private static async Task ExecutePostRestartSequenceAsync()
-    {
-        await Task.Delay(5000); // Give system time to stabilize
-        
-        const int maxAttempts = 12;
-        for (int attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            try
-            {
-                LogUtil.LogInfo("RestartManager", $"Post-restart startup attempt {attempt + 1}/{maxAttempts}");
-                
-                // Start all bots
-                await StartAllBotsAsync();
-                
-                LogUtil.LogInfo("RestartManager", "Post-restart startup sequence completed successfully");
-                break;
-            }
-            catch (Exception ex)
-            {
-                LogUtil.LogError("RestartManager", $"Error during post-restart startup attempt {attempt + 1}: {ex.Message}");
-                if (attempt < maxAttempts - 1)
-                    await Task.Delay(5000);
-            }
-        }
-    }
-    
-    private static async Task StartAllBotsAsync()
-    {
-        // Start local bots
-        ExecuteLocalCommand(BotControlCommand.Start);
-        LogUtil.LogInfo("RestartManager", "Start command sent to local bots");
-        
-        // Start remote instances
-        var instances = GetAllRunningInstances();
-        if (instances.Count > 0)
-        {
-            LogUtil.LogInfo("RestartManager", $"Found {instances.Count} remote instances. Sending start commands...");
-            
-            var tasks = instances.Select(async instance =>
-            {
-                try
-                {
-                    var response = await Task.Run(() => BotServer.QueryRemote(instance.Port, "STARTALL"));
-                    LogUtil.LogInfo("RestartManager", $"Start command sent to port {instance.Port}: {response}");
-                }
-                catch (Exception ex)
-                {
-                    LogUtil.LogError("RestartManager", $"Failed to send start command to port {instance.Port}: {ex.Message}");
-                }
-            });
-            
-            await Task.WhenAll(tasks);
-        }
-    }
-
-    private static List<(int Port, int ProcessId)> GetAllRunningInstances()
-    {
-        var instances = new List<(int, int)>();
-
-        try
-        {
-            var processes = Process.GetProcessesByName("PokeBot")
-                .Where(p => p.Id != Environment.ProcessId);
-
-            foreach (var process in processes)
-            {
-                try
-                {
-                    var exePath = process.MainModule?.FileName;
-                    if (string.IsNullOrEmpty(exePath))
-                        continue;
-
-                    var portFile = Path.Combine(Path.GetDirectoryName(exePath)!, $"PokeBot_{process.Id}.port");
-                    if (!File.Exists(portFile))
-                        continue;
-
-                    var portText = File.ReadAllText(portFile).Trim();
-                    // Port file now contains TCP port on first line, web port on second line (for slaves)
-                    var lines = portText.Split('\n', '\r').Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
-                    if (lines.Length == 0 || !int.TryParse(lines[0], out var port))
-                        continue;
-
-                    if (IsPortOpen(port))
-                    {
-                        instances.Add((port, process.Id));
-                    }
-                }
-                catch { }
-            }
-        }
-        catch { }
-
-        return instances;
-    }
     #endregion
 }
 
@@ -999,8 +933,43 @@ public enum RestartReason
 
 public class RestartScheduleConfig
 {
-    public bool Enabled { get; set; } = false;
-    public string Time { get; set; } = "00:00";
+    public bool Enabled { get; set; }
+    public string Cron { get; set; } = string.Empty;
+
+    // Kept for compatibility with existing web clients and restart_schedule.json.
+    public string? Time { get; set; }
+
+    internal static RestartScheduleConfig FromHub(PokeTradeHubConfig hub)
+    {
+        var cron = hub.RestartCronSchedule;
+        return new RestartScheduleConfig
+        {
+            Enabled = hub.ScheduledRestartEnabled,
+            Cron = cron,
+            Time = CronSchedule.TryGetDailyTime(cron, out var time)
+                ? $"{time.Hours:00}:{time.Minutes:00}"
+                : null,
+        };
+    }
+
+    internal string ResolveCronExpression()
+    {
+        if (!string.IsNullOrWhiteSpace(Cron))
+        {
+            return string.Join(
+                ' ',
+                Cron.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        }
+
+        if (TimeSpan.TryParse(Time, out var legacyTime) &&
+            legacyTime >= TimeSpan.Zero &&
+            legacyTime < TimeSpan.FromDays(1))
+        {
+            return CronSchedule.FromDailyTime(legacyTime);
+        }
+
+        return BaseConfig.DefaultRestartCronSchedule;
+    }
 }
 
 public class RestartResult

@@ -5,6 +5,7 @@ obj/
 .vs/
 *.DotSettings.user
 config.json
+.jez/
 .env
 trade-control.sqlite3
 trade-control.sqlite3-shm

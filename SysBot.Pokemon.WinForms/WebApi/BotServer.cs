@@ -721,6 +721,7 @@ public partial class BotServer(
                 var response = new
                 {
                     config.Enabled,
+                    config.Cron,
                     config.Time,
                     NextRestart = nextRestart?.ToString("yyyy-MM-dd HH:mm:ss"),
                     RestartManager.IsRestartInProgress,
@@ -750,7 +751,9 @@ public partial class BotServer(
                     return CreateErrorResponse("Invalid schedule configuration");
                 }
 
-                LogUtil.LogInfo($"Updating restart schedule - Enabled: {config.Enabled}, Time: {config.Time}", "WebServer");
+                LogUtil.LogInfo(
+                    $"Updating restart schedule - Enabled: {config.Enabled}, Cron: {config.ResolveCronExpression()}",
+                    "WebServer");
                 RestartManager.UpdateScheduleConfig(config);
                 
                 var result = new 

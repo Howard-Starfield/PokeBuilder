@@ -68,8 +68,6 @@ public static class WebApiExtensions
         {
             CleanupStalePortFiles();
 
-            CheckPostRestartStartup(mainForm);
-
             if (IsPortInUse(_webPort))
             {
                 lock (_portLock)
@@ -80,7 +78,7 @@ public static class WebApiExtensions
                 StartTcpOnly();
 
                 StartMasterMonitor();
-                RestartManager.Initialize(mainForm, _tcpPort);
+                RestartManager.Initialize(mainForm, _tcpPort, scheduleOwner: false);
                 // Check for any pending update state and attempt to resume
                 _ = Task.Run(async () =>
                 {
@@ -106,7 +104,7 @@ public static class WebApiExtensions
             }
             StartFullServer();
 
-            RestartManager.Initialize(mainForm, _tcpPort);
+            RestartManager.Initialize(mainForm, _tcpPort, scheduleOwner: true);
             // Check for any pending update state and attempt to resume
             _ = Task.Run(async () =>
             {
@@ -594,6 +592,7 @@ public static class WebApiExtensions
             return System.Text.Json.JsonSerializer.Serialize(new
             {
                 config.Enabled,
+                config.Cron,
                 config.Time,
                 NextRestart = nextRestart?.ToString("yyyy-MM-dd HH:mm:ss"),
                 IsRestartInProgress = RestartManager.IsRestartInProgress,
@@ -1065,129 +1064,6 @@ public static class WebApiExtensions
         {
             LogUtil.LogError("WebServer", $"Error stopping web server: {ex.Message}");
         }
-    }
-
-    private static void CheckPostRestartStartup(Main mainForm)
-    {
-        try
-        {
-            var workingDir = Path.GetDirectoryName(Application.ExecutablePath) ?? Environment.CurrentDirectory;
-            var restartFlagPath = Path.Combine(workingDir, "restart_in_progress.flag");
-            var updateFlagPath = Path.Combine(workingDir, "update_in_progress.flag");
-
-            bool isPostRestart = File.Exists(restartFlagPath);
-            bool isPostUpdate = File.Exists(updateFlagPath);
-
-            if (!isPostRestart && !isPostUpdate)
-                return;
-
-            string operation = isPostRestart ? "restart" : "update";
-            string logSource = isPostRestart ? "RestartManager" : "UpdateManager";
-            
-            LogUtil.LogInfo($"Post-{operation} startup detected. Waiting for all instances to come online...", logSource);
-
-            if (isPostRestart) File.Delete(restartFlagPath);
-            if (isPostUpdate) File.Delete(updateFlagPath);
-
-            Task.Run(() => HandlePostOperationStartupAsync(mainForm, operation, logSource));
-        }
-        catch (Exception ex)
-        {
-            LogUtil.LogError("StartupManager", $"Error checking post-restart/update startup: {ex.Message}");
-        }
-    }
-    
-    private static async Task HandlePostOperationStartupAsync(Main mainForm, string operation, string logSource)
-    {
-        await Task.Delay(5000);
-        
-        const int maxAttempts = 12;
-        for (int attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            try
-            {
-                LogUtil.LogInfo($"Post-{operation} check attempt {attempt + 1}/{maxAttempts}", logSource);
-                
-                // Start local bots
-                ExecuteMainFormMethod("SendAll", BotControlCommand.Start);
-                LogUtil.LogInfo("Start All command sent to local bots", logSource);
-                
-                // Start remote instances
-                var instances = GetAllRunningInstances(0);
-                if (instances.Count > 0)
-                {
-                    LogUtil.LogInfo($"Found {instances.Count} remote instances online. Sending Start All command...", logSource);
-                    await SendStartCommandsToRemoteInstancesAsync(instances, logSource);
-                }
-                
-                LogUtil.LogInfo($"Post-{operation} Start All commands completed successfully", logSource);
-                break;
-            }
-            catch (Exception ex)
-            {
-                LogUtil.LogError($"Error during post-{operation} startup attempt {attempt + 1}: {ex.Message}", logSource);
-                if (attempt < maxAttempts - 1)
-                    await Task.Delay(5000);
-            }
-        }
-    }
-    
-    private static async Task SendStartCommandsToRemoteInstancesAsync(List<(int Port, int ProcessId)> instances, string logSource)
-    {
-        var tasks = instances.Select(instance => Task.Run(() =>
-        {
-            try
-            {
-                var response = BotServer.QueryRemote(instance.Port, "STARTALL");
-                LogUtil.LogInfo($"Start command sent to port {instance.Port}: {response}", logSource);
-            }
-            catch (Exception ex)
-            {
-                LogUtil.LogError($"Failed to send start command to port {instance.Port}: {ex.Message}", logSource);
-            }
-        }));
-        
-        await Task.WhenAll(tasks);
-    }
-
-    private static List<(int Port, int ProcessId)> GetAllRunningInstances(int currentPort)
-    {
-        var instances = new List<(int, int)>();
-
-        try
-        {
-            var processes = Process.GetProcessesByName("PokeBot")
-                .Where(p => p.Id != Environment.ProcessId);
-
-            foreach (var process in processes)
-            {
-                try
-                {
-                    var exePath = process.MainModule?.FileName;
-                    if (string.IsNullOrEmpty(exePath))
-                        continue;
-
-                    var portFile = Path.Combine(Path.GetDirectoryName(exePath)!, $"PokeBot_{process.Id}.port");
-                    if (!File.Exists(portFile))
-                        continue;
-
-                    var portText = File.ReadAllText(portFile).Trim();
-                    // Port file now contains TCP port on first line, web port on second line (for slaves)
-                    var lines = portText.Split('\n', '\r').Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
-                    if (lines.Length == 0 || !int.TryParse(lines[0], out var port))
-                        continue;
-
-                    if (IsPortInUse(port))
-                    {
-                        instances.Add((port, process.Id));
-                    }
-                }
-                catch { }
-            }
-        }
-        catch { }
-
-        return instances;
     }
 
 }

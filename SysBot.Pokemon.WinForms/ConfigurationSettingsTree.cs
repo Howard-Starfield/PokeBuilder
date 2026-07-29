@@ -7,7 +7,9 @@ using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Windows.Forms;
+using SysBot.Pokemon.Helpers;
 
 namespace SysBot.Pokemon.WinForms;
 
@@ -15,10 +17,14 @@ internal sealed class ConfigurationSettingsTree : UserControl
 {
     private readonly FlowLayoutPanel _content;
     private object? _view;
+    private IReadOnlyList<ConfigurationSearchResult>? _searchResults;
+    private string _searchQuery = string.Empty;
     private Action? _valueChanged;
     private Action? _openAdvanced;
+    private IReadOnlyList<ConfigurationCategoryAction>? _actions;
     private readonly HashSet<string> _expandedGroupKeys = [];
     private bool _expansionStateInitialized;
+    private bool _rebuildPending;
     private int _scalePercent = ProgramConfig.DefaultConfigurationFontScalePercent;
 
     public ConfigurationSettingsTree()
@@ -37,21 +43,54 @@ internal sealed class ConfigurationSettingsTree : UserControl
         Controls.Add(_content);
     }
 
-    public void Bind(object view, int scalePercent, Action valueChanged, Action openAdvanced)
+    public void Bind(
+        object view,
+        int scalePercent,
+        Action valueChanged,
+        Action openAdvanced,
+        IReadOnlyList<ConfigurationCategoryAction>? actions = null)
     {
-        if (!ReferenceEquals(_view, view))
+        if (!ReferenceEquals(_view, view) || _searchResults is not null)
         {
             _expandedGroupKeys.Clear();
             _expansionStateInitialized = false;
         }
 
         _view = view;
+        _searchResults = null;
+        _searchQuery = string.Empty;
         _scalePercent = Math.Clamp(
             scalePercent,
             ProgramConfig.MinConfigurationFontScalePercent,
             ProgramConfig.MaxConfigurationFontScalePercent);
         _valueChanged = valueChanged;
         _openAdvanced = openAdvanced;
+        _actions = actions;
+        Rebuild();
+    }
+
+    public void BindSearch(
+        IReadOnlyList<ConfigurationSearchResult> results,
+        string query,
+        int scalePercent,
+        Action valueChanged,
+        Action openAdvanced)
+    {
+        if (!string.Equals(_searchQuery, query, StringComparison.CurrentCultureIgnoreCase))
+        {
+            _expandedGroupKeys.Clear();
+            _expansionStateInitialized = false;
+        }
+
+        _searchResults = results;
+        _searchQuery = query;
+        _scalePercent = Math.Clamp(
+            scalePercent,
+            ProgramConfig.MinConfigurationFontScalePercent,
+            ProgramConfig.MaxConfigurationFontScalePercent);
+        _valueChanged = valueChanged;
+        _openAdvanced = openAdvanced;
+        _actions = null;
         Rebuild();
     }
 
@@ -65,13 +104,13 @@ internal sealed class ConfigurationSettingsTree : UserControl
             return;
 
         _scalePercent = clamped;
-        if (_view is not null)
+        if (_view is not null || _searchResults is not null)
             Rebuild();
     }
 
     private void Rebuild()
     {
-        if (_view is null)
+        if (_view is null && _searchResults is null)
             return;
 
         _content.SuspendLayout();
@@ -82,6 +121,16 @@ internal sealed class ConfigurationSettingsTree : UserControl
             _content.Controls.Clear();
             foreach (var control in oldControls)
                 control.Dispose();
+
+            if (_searchResults is not null)
+            {
+                BuildSearchResults(_searchResults);
+                _expansionStateInitialized = true;
+                return;
+            }
+
+            if (_view is null)
+                return;
 
             var properties = TypeDescriptor.GetProperties(_view)
                 .Cast<PropertyDescriptor>()
@@ -110,6 +159,7 @@ internal sealed class ConfigurationSettingsTree : UserControl
                 _content.Controls.Add(group);
             }
 
+            AddCategoryActions();
             _expansionStateInitialized = true;
         }
         finally
@@ -117,6 +167,64 @@ internal sealed class ConfigurationSettingsTree : UserControl
             _content.ResumeLayout(true);
             UpdateControlWidths();
             _content.AutoScrollPosition = new Point(0, scrollOffset);
+        }
+    }
+
+    private void BuildSearchResults(IReadOnlyList<ConfigurationSearchResult> results)
+    {
+        if (results.Count == 0)
+        {
+            _content.Controls.Add(new ConfigurationSearchEmptyState(_searchQuery, _scalePercent));
+            return;
+        }
+
+        var groups = results
+            .GroupBy(result => result.Entry.CategoryName)
+            .OrderByDescending(group => group.Max(result => result.Score))
+            .ThenBy(group => group.Key, StringComparer.CurrentCultureIgnoreCase);
+        foreach (var resultGroup in groups)
+        {
+            var groupKey = $"search:{resultGroup.Key}";
+            var resultArray = resultGroup
+                .OrderByDescending(result => result.Score)
+                .ThenBy(result => result.Entry.Title, StringComparer.CurrentCultureIgnoreCase)
+                .ToArray();
+            var group = CreateDisclosureGroup(
+                groupKey,
+                resultGroup.Key,
+                $"{resultArray.Length} match{(resultArray.Length == 1 ? string.Empty : "es")}",
+                depth: 0,
+                expandedByDefault: true);
+
+            foreach (var result in resultArray)
+            {
+                var entry = result.Entry;
+                object? value;
+                try
+                {
+                    value = entry.Property.GetValue(entry.Owner);
+                }
+                catch
+                {
+                    value = null;
+                }
+
+                var editor = CreateEditor(entry.Owner, entry.Property, value);
+                ConfigureEditorAccessibility(editor, entry.Title, entry.Description);
+                var description = string.IsNullOrWhiteSpace(entry.Description)
+                    ? entry.Breadcrumb
+                    : string.IsNullOrWhiteSpace(entry.Breadcrumb)
+                        ? entry.Description
+                        : $"{entry.Breadcrumb} \u00b7 {entry.Description}";
+                group.AddChild(new ModernSettingRow(
+                    entry.Title,
+                    description,
+                    editor,
+                    _scalePercent,
+                    depth: 1));
+            }
+
+            _content.Controls.Add(group);
         }
     }
 
@@ -174,8 +282,54 @@ internal sealed class ConfigurationSettingsTree : UserControl
         parent.AddChild(row);
     }
 
+    private void AddCategoryActions()
+    {
+        if (_actions is not { Count: > 0 })
+            return;
+
+        const string groupKey = "category:test-and-maintenance";
+        var group = CreateDisclosureGroup(
+            groupKey,
+            "Restart test",
+            $"{_actions.Count} action{(_actions.Count == 1 ? string.Empty : "s")}",
+            depth: 0,
+            expandedByDefault: true);
+        foreach (var action in _actions)
+        {
+            var editor = new ModernActionButton(
+                action.ButtonText,
+                action.ExecuteAsync,
+                _scalePercent);
+            ConfigureEditorAccessibility(editor, action.Title, action.Description);
+            group.AddChild(new ModernSettingRow(
+                action.Title,
+                action.Description,
+                editor,
+                _scalePercent,
+                depth: 1));
+        }
+
+        _content.Controls.Add(group);
+    }
+
     private Control CreateEditor(object owner, PropertyDescriptor property, object? value)
     {
+        if (property.Attributes[typeof(CurrentSystemTimeAttribute)] is CurrentSystemTimeAttribute)
+            return new ModernSystemTimeDisplay(_scalePercent);
+
+        if (property.Attributes[typeof(RestartTimePickerAttribute)] is RestartTimePickerAttribute &&
+            value is string restartSchedule)
+        {
+            return new ModernRestartTimePickerEditor(
+                restartSchedule,
+                cron =>
+                {
+                    property.SetValue(owner, cron);
+                    _valueChanged?.Invoke();
+                },
+                _scalePercent);
+        }
+
         if (ConfigurationCollectionEditor.CanEdit(property, value))
         {
             return new ModernAdvancedValueButton(
@@ -188,7 +342,7 @@ internal sealed class ConfigurationSettingsTree : UserControl
                     () =>
                     {
                         _valueChanged?.Invoke();
-                        Rebuild();
+                        RequestRebuild();
                     }),
                 _scalePercent,
                 "Edit list…");
@@ -237,6 +391,26 @@ internal sealed class ConfigurationSettingsTree : UserControl
         }
 
         return new ModernAdvancedValueButton(GetSummary(value), _openAdvanced, _scalePercent);
+    }
+
+    private void RequestRebuild()
+    {
+        if (_rebuildPending || IsDisposed)
+            return;
+
+        if (!IsHandleCreated)
+        {
+            Rebuild();
+            return;
+        }
+
+        _rebuildPending = true;
+        BeginInvoke((Action)(() =>
+        {
+            _rebuildPending = false;
+            if (!IsDisposed)
+                Rebuild();
+        }));
     }
 
     private ModernDisclosureGroup CreateDisclosureGroup(
@@ -291,8 +465,13 @@ internal sealed class ConfigurationSettingsTree : UserControl
             SystemInformation.VerticalScrollBarWidth -
             4);
 
-        foreach (var group in _content.Controls.OfType<ModernDisclosureGroup>())
-            group.SetAvailableWidth(availableWidth);
+        foreach (Control control in _content.Controls)
+        {
+            if (control is ModernDisclosureGroup group)
+                group.SetAvailableWidth(availableWidth);
+            else
+                control.Width = availableWidth;
+        }
     }
 
     private static object GetPropertyOwner(object component, PropertyDescriptor property)
@@ -945,6 +1124,73 @@ internal sealed class ModernChoiceEditor : Button
         AccessibleName = $"{_accessibleLabel}, current value {_display(_value)}";
 }
 
+internal sealed class ConfigurationSearchEmptyState : Control
+{
+    private readonly Font _titleFont;
+    private readonly Font _descriptionFont;
+    private readonly string _query;
+
+    public ConfigurationSearchEmptyState(string query, int scalePercent)
+    {
+        _query = query;
+        AccessibleName = $"No settings found for {query}";
+        BackColor = ConfigurationTheme.Canvas;
+        Height = ConfigurationTheme.ScalePixels(116, scalePercent);
+        Margin = new Padding(0, 4, 0, 0);
+        _titleFont = new Font(
+            "Segoe UI Semibold",
+            ConfigurationTheme.ScaleFont(10.5F, scalePercent));
+        _descriptionFont = new Font(
+            "Segoe UI",
+            ConfigurationTheme.ScaleFont(8.5F, scalePercent));
+        SetStyle(
+            ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.OptimizedDoubleBuffer |
+            ControlStyles.ResizeRedraw |
+            ControlStyles.UserPaint,
+            true);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var bounds = Rectangle.Inflate(ClientRectangle, -1, -1);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var path = new GraphicsPath())
+        using (var fill = new SolidBrush(ConfigurationTheme.SurfaceRaised))
+        using (var border = new Pen(ConfigurationTheme.Border))
+        {
+            path.AddRoundedRectangle(bounds, 8);
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
+        }
+
+        TextRenderer.DrawText(
+            e.Graphics,
+            "No matching settings",
+            _titleFont,
+            new Rectangle(20, 24, Math.Max(40, Width - 40), 24),
+            ConfigurationTheme.TextPrimary,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        TextRenderer.DrawText(
+            e.Graphics,
+            $"Try a setting name, category, or related phrase instead of \u201c{_query}\u201d.",
+            _descriptionFont,
+            new Rectangle(20, 54, Math.Max(40, Width - 40), 38),
+            ConfigurationTheme.TextMuted,
+            TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _titleFont.Dispose();
+            _descriptionFont.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+}
+
 internal sealed class ModernTextValueEditor : UserControl
 {
     private readonly TextBox _textBox;
@@ -1099,6 +1345,275 @@ internal sealed class ModernAdvancedValueButton : Button
             _ownedFont.Dispose();
         base.Dispose(disposing);
     }
+}
+
+internal sealed class ModernActionButton : Button
+{
+    private readonly Func<Task> _executeAsync;
+    private readonly Font _ownedFont;
+    private readonly string _idleText;
+    private bool _running;
+
+    public ModernActionButton(
+        string text,
+        Func<Task> executeAsync,
+        int scalePercent)
+    {
+        _idleText = text;
+        _executeAsync = executeAsync;
+        AccessibleRole = AccessibleRole.PushButton;
+        BackColor = ConfigurationTheme.Surface;
+        Cursor = Cursors.Hand;
+        FlatAppearance.BorderColor = ConfigurationTheme.Accent;
+        FlatAppearance.BorderSize = 1;
+        FlatAppearance.MouseDownBackColor = ConfigurationTheme.AccentPressed;
+        FlatAppearance.MouseOverBackColor = ConfigurationTheme.SurfaceSelected;
+        FlatStyle = FlatStyle.Flat;
+        _ownedFont = new Font(
+            "Segoe UI Semibold",
+            ConfigurationTheme.ScaleFont(8.5F, scalePercent));
+        Font = _ownedFont;
+        ForeColor = ConfigurationTheme.TextPrimary;
+        Text = text;
+        Click += Execute_Click;
+    }
+
+    private async void Execute_Click(object? sender, EventArgs e)
+    {
+        if (_running)
+            return;
+
+        _running = true;
+        Enabled = false;
+        Text = "Restarting\u2026";
+        try
+        {
+            await _executeAsync();
+        }
+        finally
+        {
+            if (!IsDisposed)
+            {
+                Text = _idleText;
+                Enabled = true;
+                _running = false;
+            }
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+            _ownedFont.Dispose();
+        base.Dispose(disposing);
+    }
+}
+
+internal sealed class ModernRestartTimePickerEditor : UserControl
+{
+    private readonly ModernChoiceEditor _hourPicker;
+    private readonly ModernChoiceEditor _minutePicker;
+    private readonly ModernChoiceEditor? _periodPicker;
+    private readonly Action<string> _valueChanged;
+    private readonly bool _use24HourClock;
+    private int _hour;
+    private int _minute;
+    private bool _isPm;
+
+    public ModernRestartTimePickerEditor(
+        string cron,
+        Action<string> valueChanged,
+        int scalePercent)
+    {
+        _valueChanged = valueChanged;
+        _use24HourClock = CultureInfo.CurrentCulture.DateTimeFormat.ShortTimePattern.Contains('H');
+        BackColor = Color.Transparent;
+
+        if (!CronSchedule.TryGetDailyTime(cron, out var restartTime))
+        {
+            try
+            {
+                restartTime = CronSchedule
+                    .Parse(cron)
+                    .GetNextOccurrence(DateTime.Now)
+                    .TimeOfDay;
+            }
+            catch
+            {
+                restartTime = TimeSpan.FromHours(4);
+            }
+        }
+
+        _hour = _use24HourClock ? restartTime.Hours : restartTime.Hours % 12;
+        if (!_use24HourClock && _hour == 0)
+            _hour = 12;
+        _minute = restartTime.Minutes;
+        _isPm = restartTime.Hours >= 12;
+
+        _hourPicker = new ModernChoiceEditor(
+            (_use24HourClock
+                ? Enumerable.Range(0, 24)
+                : Enumerable.Range(1, 12))
+            .Cast<object>()
+            .ToArray(),
+            _hour,
+            value => $"{value:00}",
+            value =>
+            {
+                _hour = (int)value;
+                Commit();
+            },
+            scalePercent);
+        var minuteValues = Enumerable.Range(0, 12)
+            .Select(index => index * 5)
+            .Append(_minute)
+            .Distinct()
+            .Order()
+            .Cast<object>()
+            .ToArray();
+        _minutePicker = new ModernChoiceEditor(
+            minuteValues,
+            _minute,
+            value => $"{value:00}",
+            value =>
+            {
+                _minute = (int)value;
+                Commit();
+            },
+            scalePercent);
+        if (!_use24HourClock)
+        {
+            var format = CultureInfo.CurrentCulture.DateTimeFormat;
+            _periodPicker = new ModernChoiceEditor(
+                new object[] { false, true },
+                _isPm,
+                value => value is true ? format.PMDesignator : format.AMDesignator,
+                value =>
+                {
+                    _isPm = (bool)value;
+                    Commit();
+                },
+                scalePercent);
+        }
+        _hourPicker.SetAccessibility("Restart hour", "Choose the local restart hour.");
+        _minutePicker.SetAccessibility("Restart minute", "Choose the local restart minute.");
+        _periodPicker?.SetAccessibility("Restart period", "Choose AM or PM.");
+        Controls.Add(_hourPicker);
+        Controls.Add(_minutePicker);
+        if (_periodPicker is not null)
+            Controls.Add(_periodPicker);
+        Resize += (_, _) => LayoutPickers();
+        UpdateAccessibleName();
+    }
+
+    private void Commit()
+    {
+        var hour24 = Get24Hour();
+        _valueChanged(CronSchedule.FromDailyTime(new TimeSpan(hour24, _minute, 0)));
+        UpdateAccessibleName();
+    }
+
+    private void LayoutPickers()
+    {
+        var gap = 4;
+        if (_periodPicker is null)
+        {
+            var segmentWidth = Math.Max(48, (Width - gap) / 2);
+            _hourPicker.Bounds = new Rectangle(0, 0, segmentWidth, Height);
+            _minutePicker.Bounds = new Rectangle(
+                segmentWidth + gap,
+                0,
+                Math.Max(48, Width - segmentWidth - gap),
+                Height);
+            return;
+        }
+
+        var periodWidth = Math.Clamp(Width / 3, 64, 82);
+        var numericWidth = Math.Max(48, (Width - periodWidth - (gap * 2)) / 2);
+        _hourPicker.Bounds = new Rectangle(0, 0, numericWidth, Height);
+        _minutePicker.Bounds = new Rectangle(numericWidth + gap, 0, numericWidth, Height);
+        _periodPicker.Bounds = new Rectangle(
+            (numericWidth * 2) + (gap * 2),
+            0,
+            Math.Max(48, Width - (numericWidth * 2) - (gap * 2)),
+            Height);
+    }
+
+    private void UpdateAccessibleName()
+    {
+        var selected = DateTime.Today.AddHours(Get24Hour()).AddMinutes(_minute);
+        AccessibleName = $"Daily restart time, {selected.ToString("t", CultureInfo.CurrentCulture)}";
+    }
+
+    private int Get24Hour() => _use24HourClock
+        ? _hour
+        : _hour % 12 + (_isPm ? 12 : 0);
+}
+
+internal sealed class ModernSystemTimeDisplay : Control
+{
+    private readonly Font _ownedFont;
+    private readonly System.Windows.Forms.Timer _clockTimer;
+
+    public ModernSystemTimeDisplay(int scalePercent)
+    {
+        BackColor = ConfigurationTheme.Surface;
+        _ownedFont = new Font(
+            "Segoe UI Semibold",
+            ConfigurationTheme.ScaleFont(8.75F, scalePercent));
+        _clockTimer = new System.Windows.Forms.Timer
+        {
+            Interval = 1_000,
+            Enabled = true,
+        };
+        _clockTimer.Tick += (_, _) =>
+        {
+            UpdateAccessibleName();
+            Invalidate();
+        };
+        SetStyle(
+            ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.OptimizedDoubleBuffer |
+            ControlStyles.ResizeRedraw |
+            ControlStyles.UserPaint,
+            true);
+        UpdateAccessibleName();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var path = new GraphicsPath())
+        using (var fill = new SolidBrush(ConfigurationTheme.Surface))
+        using (var border = new Pen(ConfigurationTheme.BorderStrong))
+        {
+            path.AddRoundedRectangle(Rectangle.Inflate(ClientRectangle, -1, -1), 6);
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
+        }
+
+        TextRenderer.DrawText(
+            e.Graphics,
+            $"Local \u00b7 {DateTime.Now.ToString("T", CultureInfo.CurrentCulture)}",
+            _ownedFont,
+            Rectangle.Inflate(ClientRectangle, -10, 0),
+            ConfigurationTheme.TextSecondary,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _clockTimer.Stop();
+            _clockTimer.Dispose();
+            _ownedFont.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+
+    private void UpdateAccessibleName() =>
+        AccessibleName = $"Current local system time, {DateTime.Now.ToString("T", CultureInfo.CurrentCulture)}";
 }
 
 internal sealed class ConfigurationMenuRenderer : ToolStripProfessionalRenderer

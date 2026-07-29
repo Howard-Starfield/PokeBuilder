@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace SysBot.Pokemon.WinForms;
 
@@ -9,10 +10,17 @@ internal sealed record ConfigurationCategoryItem(
     string Name,
     string Description,
     object View,
-    bool UsePropertyGrid = false)
+    bool UsePropertyGrid = false,
+    IReadOnlyList<ConfigurationCategoryAction>? Actions = null)
 {
     public override string ToString() => Name;
 }
+
+internal sealed record ConfigurationCategoryAction(
+    string Title,
+    string Description,
+    string ButtonText,
+    Func<Task> ExecuteAsync);
 
 /// <summary>
 /// Presents selected properties from an existing settings object without copying

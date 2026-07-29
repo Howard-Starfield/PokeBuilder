@@ -126,6 +126,18 @@ public static class ProgramConfigPersistence
             changed = true;
         }
 
+        var restartCron = string.Join(
+            ' ',
+            (config.Hub.RestartCronSchedule ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        if (!Helpers.CronSchedule.TryParse(restartCron, out _, out _))
+            restartCron = BaseConfig.DefaultRestartCronSchedule;
+        if (!string.Equals(config.Hub.RestartCronSchedule, restartCron, StringComparison.Ordinal))
+        {
+            config.Hub.RestartCronSchedule = restartCron;
+            changed = true;
+        }
+
         if (config.ConfigVersion != ProgramConfig.CurrentConfigVersion)
         {
             config.ConfigVersion = ProgramConfig.CurrentConfigVersion;
