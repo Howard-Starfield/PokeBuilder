@@ -4,6 +4,8 @@ using SysBot.Pokemon;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -118,6 +120,15 @@ public sealed class SupabasePoller : IDisposable
             ? _rng.Next(0, 100_000_000)
             : _rng.Next(0, 10000);
 
+        if (await TryProcessWithControlPlane(
+            req,
+            [req.ShowdownSet],
+            tradeCode,
+            batchTotal: 0).ConfigureAwait(false))
+        {
+            return;
+        }
+
         int queuePos = EnqueueWebTrade(pkm, mode, req, tradeCode);
         if (queuePos < 0)
         {
@@ -195,10 +206,15 @@ public sealed class SupabasePoller : IDisposable
 
         var mode = _runner.Config.Distribution.CurrentMode;
         var validPkm = new List<PKM>();
+        var validSets = new List<string>();
         foreach (var set in sets)
         {
             var result = TradeApiHandler.TryGeneratePKM(set, _runner);
-            if (result != null) validPkm.Add(result.Value.pkm);
+            if (result != null)
+            {
+                validPkm.Add(result.Value.pkm);
+                validSets.Add(set);
+            }
         }
 
         if (validPkm.Count == 0)
@@ -218,6 +234,15 @@ public sealed class SupabasePoller : IDisposable
         // Only one valid set — fall back to single trade
         if (validPkm.Count == 1)
         {
+            if (await TryProcessWithControlPlane(
+                req,
+                validSets,
+                tradeCode,
+                batchTotal: 0).ConfigureAwait(false))
+            {
+                return;
+            }
+
             int singlePos = EnqueueWebTrade(validPkm[0], mode, req, tradeCode);
             if (singlePos < 0)
             {
@@ -234,6 +259,15 @@ public sealed class SupabasePoller : IDisposable
                 link_code = tradeCode,
                 queue_position = singlePos,
             });
+            return;
+        }
+
+        if (await TryProcessWithControlPlane(
+            req,
+            validSets,
+            tradeCode,
+            validPkm.Count).ConfigureAwait(false))
+        {
             return;
         }
 
@@ -318,6 +352,215 @@ public sealed class SupabasePoller : IDisposable
         }
 
         return hub.Queues.Info.CheckPosition(webUserId, 0, PokeRoutineType.Batch).Position;
+    }
+
+    private async Task<bool> TryProcessWithControlPlane(
+        TradeRequestRow request,
+        IReadOnlyList<string> showdownSets,
+        int tradeCode,
+        int batchTotal)
+    {
+        if (McpControlPlaneService.CurrentOrchestrator is not { } orchestrator)
+            return false;
+
+        var trainerId = StableWebsiteTrainerId(request.UserId);
+        var submission =
+            await ControlPlaneHttpTradeBridge.SubmitQueueAsync(
+                orchestrator,
+                _runner,
+                trainerId,
+                "WebTrader",
+                showdownSets,
+                tradeCode,
+                isFavored: false,
+                rateLimitReservationId: null,
+                requestedIdempotencyKey: $"supabase-{request.Id}",
+                requestIdentity: request.Id).ConfigureAwait(false);
+        if (!submission.IsSuccess)
+        {
+            await _client.UpdateTradeRequest(request.Id, new
+            {
+                status = "failed",
+                result_message =
+                    submission.Error?.Message ??
+                    "Could not enqueue durable trade operation.",
+            }).ConfigureAwait(false);
+            return true;
+        }
+
+        WebTradeRegistry.CancelActions[request.Id] = () =>
+            ControlPlaneHttpTradeBridge.Cancel(
+                orchestrator,
+                submission.OwnerId!,
+                submission.OperationId!,
+                request.Id);
+        _ = Task.Run(() => MirrorControlPlaneOperation(
+            orchestrator,
+            submission.OwnerId!,
+            submission.OperationId!,
+            request,
+            batchTotal));
+
+        await _client.UpdateTradeRequest(request.Id, new
+        {
+            status = "queued",
+            link_code = tradeCode,
+            queue_position = submission.Admission!.QueuePosition,
+            batch_current = batchTotal > 0 ? 0 : (int?)null,
+        }).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task MirrorControlPlaneOperation(
+        TradeOrchestrator orchestrator,
+        string ownerId,
+        string operationId,
+        TradeRequestRow request,
+        int batchTotal)
+    {
+        string? previousFingerprint = null;
+        try
+        {
+            while (true)
+            {
+                var operationResponse =
+                    orchestrator.GetTradeOperation(ownerId, operationId);
+                if (!operationResponse.Success)
+                    throw new InvalidOperationException(
+                        operationResponse.Error?.Message ??
+                        "Trade operation is unavailable.");
+                var operation = operationResponse.Data!;
+                var planResponse =
+                    orchestrator.GetTradePlan(ownerId, operation.PlanId);
+                if (!planResponse.Success)
+                    throw new InvalidOperationException(
+                        planResponse.Error?.Message ??
+                        "Trade plan is unavailable.");
+
+                var plan = planResponse.Data!;
+                var current = operation.CurrentItemId is null
+                    ? plan.Items.OrderBy(z => z.Position).FirstOrDefault(
+                        z => !IsFinished(z.State))
+                    : plan.Items.FirstOrDefault(
+                        z => z.ItemId == operation.CurrentItemId);
+                var status = MapSupabaseStatus(operation.State, current?.State);
+                var batchCurrent = batchTotal > 0
+                    ? operation.State == TradeOperationState.Completed
+                        ? batchTotal
+                        : current?.Position + 1 ??
+                            plan.Items.Count(z => IsFinished(z.State))
+                    : 0;
+                var message = OperationMessage(operation.State);
+                var fingerprint = $"{status}:{batchCurrent}:{message}";
+                if (!string.Equals(
+                    fingerprint,
+                    previousFingerprint,
+                    StringComparison.Ordinal))
+                {
+                    await _client.UpdateTradeRequest(request.Id, new
+                    {
+                        status,
+                        result_message = message,
+                        batch_current =
+                            batchTotal > 0 ? batchCurrent : (int?)null,
+                    }).ConfigureAwait(false);
+                    previousFingerprint = fingerprint;
+                }
+
+                if (operation.State is
+                    TradeOperationState.Completed or
+                    TradeOperationState.Failed or
+                    TradeOperationState.Cancelled)
+                {
+                    await _client.InsertTradeHistory(new()
+                    {
+                        Source = "web",
+                        UserId = request.UserId,
+                        ShowdownSet = request.ShowdownSet,
+                        GameVersion = request.GameVersion,
+                        Status = status,
+                        ResultMessage = message,
+                    }).ConfigureAwait(false);
+                    return;
+                }
+
+                await Task.Delay(250).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogUtil.LogInfo(
+                "SupabasePoller",
+                $"Durable status mirror failed for {request.Id}: {ex.Message}");
+            try
+            {
+                await _client.UpdateTradeRequest(request.Id, new
+                {
+                    status = "failed",
+                    result_message =
+                        "Trade status synchronization failed; an operator should inspect the durable operation.",
+                }).ConfigureAwait(false);
+            }
+            catch (Exception updateException)
+            {
+                LogUtil.LogInfo(
+                    "SupabasePoller",
+                    $"Could not report mirror failure for {request.Id}: {updateException.Message}");
+            }
+        }
+        finally
+        {
+            WebTradeRegistry.CancelActions.TryRemove(request.Id, out _);
+        }
+    }
+
+    private static string MapSupabaseStatus(
+        TradeOperationState operation,
+        TradePlanItemState? item) =>
+        operation switch
+        {
+            TradeOperationState.Completed => "completed",
+            TradeOperationState.Cancelled => "canceled",
+            TradeOperationState.Failed or
+                TradeOperationState.Paused or
+                TradeOperationState.NeedsAttention => "failed",
+            TradeOperationState.Queued => "queued",
+            _ => item == TradePlanItemState.Searching
+                ? "searching"
+                : item is
+                    TradePlanItemState.PartnerFound or
+                    TradePlanItemState.Offered or
+                    TradePlanItemState.Confirming or
+                    TradePlanItemState.Settling
+                    ? "inprogress"
+                    : "queued",
+        };
+
+    private static string? OperationMessage(TradeOperationState state) =>
+        state switch
+        {
+            TradeOperationState.Completed => "Trade completed.",
+            TradeOperationState.Cancelled => "Trade canceled.",
+            TradeOperationState.Failed => "Trade failed.",
+            TradeOperationState.Paused =>
+                "Trade paused; operator action is required.",
+            TradeOperationState.NeedsAttention =>
+                "Trade settlement is uncertain and requires operator attention.",
+            _ => null,
+        };
+
+    private static bool IsFinished(TradePlanItemState state) =>
+        state is
+            TradePlanItemState.Completed or
+            TradePlanItemState.Skipped or
+            TradePlanItemState.Failed;
+
+    private static ulong StableWebsiteTrainerId(string userId)
+    {
+        var hash = SHA256.HashData(
+            Encoding.UTF8.GetBytes(userId ?? string.Empty));
+        var trainerId = BitConverter.ToUInt64(hash, 0);
+        return trainerId == 0 ? 1UL : trainerId;
     }
 
     public void Dispose() => _timer?.Dispose();

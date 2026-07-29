@@ -57,6 +57,33 @@ public static class TradeApiHandler
             TradeCode = GetTradeCodeForUser(runner, discordUserId),
         };
 
+        if (McpControlPlaneService.CurrentOrchestrator is { } orchestrator)
+        {
+            var submission = await ControlPlaneHttpTradeBridge.SubmitAsync(
+                orchestrator,
+                runner,
+                discordUserId,
+                req.DiscordUsername,
+                [req.ShowdownSet],
+                record,
+                isFavored,
+                limitDecision?.ReservationId,
+                request.Headers["Idempotency-Key"]);
+            if (!submission.IsSuccess)
+                return ControlPlaneError(submission.Error!);
+
+            record.QueuePosition = submission.Admission!.QueuePosition;
+            return Ok(new
+            {
+                success = true,
+                trade_id = record.TradeId,
+                trade_code = record.TradeCode,
+                queue_position = submission.Admission.QueuePosition,
+                is_favored = isFavored,
+                bypassed_count = submission.Admission.BypassedCount,
+            });
+        }
+
         var enqueueResult = EnqueueTrade(pkm, mode, record, req, runner, isFavored, limitDecision?.ReservationId);
         if (enqueueResult == null)
             return Error(503, "Could not enqueue trade — bot may be offline or user already in queue");
@@ -148,6 +175,35 @@ public static class TradeApiHandler
         // Single valid set → enqueue as normal trade
         if (validPkm.Count == 1)
         {
+            if (McpControlPlaneService.CurrentOrchestrator is { } orchestrator)
+            {
+                var submission = await ControlPlaneHttpTradeBridge.SubmitAsync(
+                    orchestrator,
+                    runner,
+                    discordUserId,
+                    req.DiscordUsername,
+                    [req.ShowdownSets[validPkm[0].idx]],
+                    record,
+                    isFavored,
+                    limitDecision?.ReservationId,
+                    request.Headers["Idempotency-Key"]);
+                if (!submission.IsSuccess)
+                    return ControlPlaneError(submission.Error!);
+
+                record.QueuePosition = submission.Admission!.QueuePosition;
+                return Ok(new
+                {
+                    success = true,
+                    trade_id = record.TradeId,
+                    trade_code = record.TradeCode,
+                    queue_position = submission.Admission.QueuePosition,
+                    total = 1,
+                    skipped,
+                    is_favored = isFavored,
+                    bypassed_count = submission.Admission.BypassedCount,
+                });
+            }
+
             var enqueueResult = EnqueueTrade(validPkm[0].pkm, mode, record,
                 new TradeRequest(req.DiscordId, req.DiscordUsername, req.ShowdownSets[validPkm[0].idx], req.DiscordRoleIds, req.DiscordRoles),
                 runner, isFavored, limitDecision?.ReservationId);
@@ -173,6 +229,35 @@ public static class TradeApiHandler
         record.BatchSpecies = validPkm
             .Select(v => ((Species)v.pkm.Species).ToString())
             .ToList();
+
+        if (McpControlPlaneService.CurrentOrchestrator is { } batchOrchestrator)
+        {
+            var submission = await ControlPlaneHttpTradeBridge.SubmitAsync(
+                batchOrchestrator,
+                runner,
+                discordUserId,
+                req.DiscordUsername,
+                validPkm.Select(v => req.ShowdownSets[v.idx]).ToArray(),
+                record,
+                isFavored,
+                limitDecision?.ReservationId,
+                request.Headers["Idempotency-Key"]);
+            if (!submission.IsSuccess)
+                return ControlPlaneError(submission.Error!);
+
+            record.QueuePosition = submission.Admission!.QueuePosition;
+            return Ok(new
+            {
+                success = true,
+                trade_id = record.TradeId,
+                trade_code = record.TradeCode,
+                queue_position = submission.Admission.QueuePosition,
+                total = validPkm.Count,
+                skipped,
+                is_favored = isFavored,
+                bypassed_count = submission.Admission.BypassedCount,
+            });
+        }
 
         var batchEnqueueResult = EnqueueBatchTrade(
             validPkm.Select(v => v.pkm).ToList(),
@@ -295,6 +380,31 @@ public static class TradeApiHandler
     private static (int, object?, string) Error(int code, string message) =>
         (code, Json(new { success = false, error = message }), "application/json");
 
+    private static (int, object?, string) ControlPlaneError(
+        TradeControlError error)
+    {
+        var status = error.Code switch
+        {
+            TradeControlErrorCodes.InvalidRequest or
+                TradeControlErrorCodes.LegalityFailed or
+                TradeControlErrorCodes.ItemBlocked or
+                TradeControlErrorCodes.EvolutionBlocked or
+                TradeControlErrorCodes.EvolutionRequiresAttention => 400,
+            TradeControlErrorCodes.PlanConflict => 409,
+            TradeControlErrorCodes.RateLimited => 429,
+            _ => 503,
+        };
+        return (
+            status,
+            Json(new
+            {
+                success = false,
+                error = error.Message,
+                error_code = error.Code.ToLowerInvariant(),
+            }),
+            "application/json");
+    }
+
     private static (int, object?, string) TradeLimitError(TradeRateLimitDecision decision)
     {
         string error = decision.FailureReason switch
@@ -387,6 +497,7 @@ public static class TradeApiHandler
         ProgramMode.BDSP => AutoLegalityWrapper.GetTrainerInfo<PB8>(),
         ProgramMode.LA   => AutoLegalityWrapper.GetTrainerInfo<PA8>(),
         ProgramMode.SV   => AutoLegalityWrapper.GetTrainerInfo<PK9>(),
+        ProgramMode.LGPE => AutoLegalityWrapper.GetTrainerInfo<PB7>(),
         ProgramMode.LZA  => AutoLegalityWrapper.GetTrainerInfo<PA9>(),
         _ => null,
     };
@@ -401,6 +512,7 @@ public static class TradeApiHandler
                 ProgramMode.SWSH => EnqueueTyped((PK8)pkm, record, req, runner, isFavored, reservationId),
                 ProgramMode.BDSP => EnqueueTyped((PB8)pkm, record, req, runner, isFavored, reservationId),
                 ProgramMode.LA   => EnqueueTyped((PA8)pkm, record, req, runner, isFavored, reservationId),
+                ProgramMode.LGPE => EnqueueTyped((PB7)pkm, record, req, runner, isFavored, reservationId),
                 ProgramMode.LZA  => EnqueueTyped((PA9)pkm, record, req, runner, isFavored, reservationId),
                 _ => null,
             };
@@ -432,7 +544,22 @@ public static class TradeApiHandler
             : new RateLimitedTradeNotifier<T>(baseNotifier, reservationId);
         int preAddEntryCount = hub.Queues.Info.GetTotalEntryCount();
 
-        var detail = new PokeTradeDetail<T>(pkm, trainerInfo, notifier, PokeTradeType.Specific, record.TradeCode, isFavored);
+        var lgcode = typeof(T) == typeof(PB7)
+            ? new List<Pictocodes>
+            {
+                runner.Config.Distribution.LGPECode1,
+                runner.Config.Distribution.LGPECode2,
+                runner.Config.Distribution.LGPECode3,
+            }
+            : null;
+        var detail = new PokeTradeDetail<T>(
+            pkm,
+            trainerInfo,
+            notifier,
+            PokeTradeType.Specific,
+            record.TradeCode,
+            isFavored,
+            lgcode);
         if (reservationId is not null)
             TradeRateLimitService.Instance.AttachReservation(detail, reservationId);
         var entry = new TradeEntry<T>(detail, userId, PokeRoutineType.LinkTrade, req.DiscordUsername);
@@ -472,6 +599,7 @@ public static class TradeApiHandler
                 ProgramMode.SWSH => EnqueueBatchTyped(pkms.Cast<PK8>().ToList(), record, req, runner, isFavored, reservationId),
                 ProgramMode.BDSP => EnqueueBatchTyped(pkms.Cast<PB8>().ToList(), record, req, runner, isFavored, reservationId),
                 ProgramMode.LA   => EnqueueBatchTyped(pkms.Cast<PA8>().ToList(), record, req, runner, isFavored, reservationId),
+                ProgramMode.LGPE => EnqueueBatchTyped(pkms.Cast<PB7>().ToList(), record, req, runner, isFavored, reservationId),
                 ProgramMode.LZA  => EnqueueBatchTyped(pkms.Cast<PA9>().ToList(), record, req, runner, isFavored, reservationId),
                 _ => null,
             };
@@ -508,7 +636,15 @@ public static class TradeApiHandler
         var detail = new PokeTradeDetail<T>(
             pkms[0], trainerInfo, notifier,
             PokeTradeType.Batch, record.TradeCode,
-            favored: isFavored, lgcode: null,
+            favored: isFavored,
+            lgcode: typeof(T) == typeof(PB7)
+                ? new List<Pictocodes>
+                {
+                    runner.Config.Distribution.LGPECode1,
+                    runner.Config.Distribution.LGPECode2,
+                    runner.Config.Distribution.LGPECode3,
+                }
+                : null,
             batchTradeNumber: 1,
             totalBatchTrades: pkms.Count,
             isMysteryEgg: false,

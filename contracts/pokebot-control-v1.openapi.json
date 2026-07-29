@@ -1,0 +1,1286 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PokeBot Trade Control",
+    "version": "1.0.0",
+    "description": "Canonical application contract for the loopback PokeBot MCP control plane. Operation IDs are stable MCP tool names."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8090",
+      "description": "Default loopback control-plane host; MCP transport is exposed at /mcp and the port can be overridden with POKEBOT_MCP_PORT."
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/control/v1/bots": {
+      "get": {
+        "operationId": "list_bot_instances",
+        "summary": "List current bot instances and runtime readiness.",
+        "parameters": [
+          {
+            "name": "include_offline",
+            "in": "query",
+            "description": "Include configured bot instances that are not currently connected.",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bot instances and the active runtime generation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotInstanceList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-plans/validate": {
+      "post": {
+        "operationId": "validate_trade_plan",
+        "summary": "Validate a trade plan without persisting or queueing it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "game_mode",
+                  "access",
+                  "items"
+                ],
+                "properties": {
+                  "game_mode": {
+                    "type": "string",
+                    "$ref": "#/components/schemas/ProgramMode"
+                  },
+                  "access": {
+                    "type": "object",
+                    "$ref": "#/components/schemas/TradeAccess"
+                  },
+                  "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "$ref": "#/components/schemas/TradePlanItemInput"
+                    }
+                  },
+                  "policies": {
+                    "type": "object",
+                    "$ref": "#/components/schemas/TradePlanPolicies"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Normalized validation result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradePlanValidation"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-plans": {
+      "post": {
+        "operationId": "create_trade_plan",
+        "summary": "Create a durable draft trade plan.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "idempotency_key",
+                  "plan"
+                ],
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "description": "Caller-stable key that makes plan creation safe to replay."
+                  },
+                  "plan": {
+                    "type": "object",
+                    "$ref": "#/components/schemas/TradePlanInput"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created durable trade plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradePlan"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-plans/{plan_id}": {
+      "get": {
+        "operationId": "get_trade_plan",
+        "summary": "Retrieve a durable trade plan and item progress.",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "description": "Stable durable trade plan identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^plan_[A-Za-z0-9_-]{8,64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Trade plan and ordered items.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradePlan"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-plans/{plan_id}/enqueue": {
+      "post": {
+        "operationId": "enqueue_trade_plan",
+        "summary": "Enqueue a validated plan for durable execution.",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "description": "Stable durable trade plan identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^plan_[A-Za-z0-9_-]{8,64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "description": "Caller-stable key that makes enqueue safe to replay."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/OperationAccepted"
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-operations/{operation_id}": {
+      "get": {
+        "operationId": "get_trade_operation",
+        "summary": "Retrieve the current state of a trade operation.",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "description": "Stable durable trade operation identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^op_[A-Za-z0-9_-]{8,64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current operation state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeOperation"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-operations/{operation_id}/events": {
+      "get": {
+        "operationId": "list_trade_events",
+        "summary": "List a page of durable trade operation events.",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "description": "Stable durable trade operation identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^op_[A-Za-z0-9_-]{8,64}$"
+            }
+          },
+          {
+            "name": "after_sequence",
+            "in": "query",
+            "description": "Return events after this previously observed sequence number.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum events to return in one page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ordered page of trade events.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeEventPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-operations/{operation_id}/pause": {
+      "post": {
+        "operationId": "pause_trade_operation",
+        "summary": "Pause execution at the next safe trade boundary.",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "description": "Stable durable trade operation identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^op_[A-Za-z0-9_-]{8,64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "idempotency_key",
+                  "reason"
+                ],
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "description": "Caller-stable key that makes pause safe to replay."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "description": "Operator-visible reason for pausing the operation."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/OperationAccepted"
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-operations/{operation_id}/resume": {
+      "post": {
+        "operationId": "resume_trade_operation",
+        "summary": "Resume a paused trade operation after revalidation.",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "description": "Stable durable trade operation identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^op_[A-Za-z0-9_-]{8,64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "description": "Caller-stable key that makes resume safe to replay."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/OperationAccepted"
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-operations/{operation_id}/cancel": {
+      "post": {
+        "operationId": "cancel_trade_operation",
+        "summary": "Cancel a trade operation at the next safe boundary.",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "description": "Stable durable trade operation identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^op_[A-Za-z0-9_-]{8,64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "idempotency_key",
+                  "confirm",
+                  "reason"
+                ],
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "description": "Caller-stable key that makes cancellation safe to replay."
+                  },
+                  "confirm": {
+                    "type": "boolean",
+                    "const": true,
+                    "description": "Must be true to authorize cancellation."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "description": "Operator-visible reason for cancelling the operation."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/OperationAccepted"
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    },
+    "/control/v1/trade-operations/{operation_id}/resolve-attention": {
+      "post": {
+        "operationId": "resolve_trade_attention",
+        "summary": "Resolve an uncertain trade item with an explicit decision.",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "description": "Stable durable trade operation identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^op_[A-Za-z0-9_-]{8,64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "idempotency_key",
+                  "item_id",
+                  "resolution",
+                  "confirm",
+                  "reason"
+                ],
+                "properties": {
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "description": "Caller-stable key that makes attention resolution safe to replay."
+                  },
+                  "item_id": {
+                    "type": "string",
+                    "pattern": "^item_[A-Za-z0-9_-]{8,64}$",
+                    "description": "Trade item currently waiting for explicit attention."
+                  },
+                  "resolution": {
+                    "type": "string",
+                    "enum": [
+                      "mark_completed",
+                      "retry_current",
+                      "skip_item",
+                      "fail_plan"
+                    ],
+                    "description": "Explicit operator decision after reviewing settlement evidence."
+                  },
+                  "confirm": {
+                    "type": "boolean",
+                    "const": true,
+                    "description": "Must be true to authorize the attention resolution."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "description": "Audit reason supporting the selected resolution."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/OperationAccepted"
+          },
+          "default": {
+            "$ref": "#/components/responses/DomainError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Dedicated loopback control token supplied outside tool inputs."
+      }
+    },
+    "parameters": {
+      "PlanId": {
+        "name": "plan_id",
+        "in": "path",
+        "description": "Stable durable trade plan identifier.",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^plan_[A-Za-z0-9_-]{8,64}$"
+        }
+      },
+      "OperationId": {
+        "name": "operation_id",
+        "in": "path",
+        "description": "Stable durable trade operation identifier.",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^op_[A-Za-z0-9_-]{8,64}$"
+        }
+      }
+    },
+    "responses": {
+      "OperationAccepted": {
+        "description": "Mutation accepted as a durable operation.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/OperationAccepted"
+            }
+          }
+        }
+      },
+      "DomainError": {
+        "description": "Stable domain error.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ProgramMode": {
+        "type": "string",
+        "enum": [
+          "swsh",
+          "bdsp",
+          "la",
+          "sv",
+          "lgpe",
+          "lza"
+        ]
+      },
+      "PlanState": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "validated",
+          "queued",
+          "running",
+          "paused",
+          "needs_attention",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "ItemState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "prepared",
+          "searching",
+          "partner_found",
+          "offered",
+          "confirming",
+          "settling",
+          "needs_attention",
+          "completed",
+          "skipped",
+          "failed"
+        ]
+      },
+      "OperationState": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "paused",
+          "needs_attention",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "TradeAccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "link_code": {
+            "type": "string",
+            "pattern": "^[0-9]{8}$",
+            "description": "Eight-digit link code for games that use numeric codes."
+          },
+          "pictocodes": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            },
+            "description": "Exactly three validated LGPE pictocode names."
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "link_code"
+            ]
+          },
+          {
+            "required": [
+              "pictocodes"
+            ]
+          }
+        ]
+      },
+      "TradePlanItemInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "client_item_id",
+          "showdown_set"
+        ],
+        "properties": {
+          "client_item_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Caller-stable identifier used to correlate validation results."
+          },
+          "showdown_set": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192,
+            "description": "Complete Showdown-format Pokémon request to validate and prepare."
+          }
+        }
+      },
+      "TradePlanPolicies": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "evolution": {
+            "type": "string",
+            "enum": [
+              "block",
+              "allow_manual",
+              "allow_and_handle"
+            ],
+            "default": "block",
+            "description": "Trade-evolution behavior; non-block values require game capability evidence."
+          },
+          "partner_disconnect_max_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 3,
+            "description": "Maximum partner re-search attempts for the current item."
+          },
+          "transport_reconnect_delays_ms": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 300000
+            },
+            "default": [
+              0,
+              250,
+              1000,
+              5000,
+              30000
+            ],
+            "description": "Ordered reconnect delays after a transport failure."
+          },
+          "on_retry_exhausted": {
+            "type": "string",
+            "enum": [
+              "pause",
+              "skip_item",
+              "cancel_plan"
+            ],
+            "default": "pause",
+            "description": "Action after bounded retry attempts are exhausted."
+          },
+          "on_uncertain_settlement": {
+            "type": "string",
+            "const": "needs_attention",
+            "default": "needs_attention",
+            "description": "Fail-closed action when confirmation began but settlement is not proven."
+          }
+        }
+      },
+      "TradePlanInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "game_mode",
+          "access",
+          "items"
+        ],
+        "properties": {
+          "game_mode": {
+            "$ref": "#/components/schemas/ProgramMode"
+          },
+          "access": {
+            "$ref": "#/components/schemas/TradeAccess"
+          },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/TradePlanItemInput"
+            }
+          },
+          "policies": {
+            "$ref": "#/components/schemas/TradePlanPolicies"
+          }
+        }
+      },
+      "CreateTradePlanRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "idempotency_key",
+          "plan"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "description": "Caller-stable key that makes plan creation safe to replay."
+          },
+          "plan": {
+            "$ref": "#/components/schemas/TradePlanInput"
+          }
+        }
+      },
+      "IdempotentMutationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "idempotency_key"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "description": "Caller-stable key that makes the mutation safe to replay."
+          }
+        }
+      },
+      "OperationReasonRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "idempotency_key",
+          "reason"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "description": "Caller-stable key that makes the mutation safe to replay."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Operator-visible reason for pausing the operation."
+          }
+        }
+      },
+      "ConfirmedActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "idempotency_key",
+          "confirm",
+          "reason"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "description": "Caller-stable key that makes the action safe to replay."
+          },
+          "confirm": {
+            "type": "boolean",
+            "const": true,
+            "description": "Must be true to authorize the destructive action."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Operator-visible reason for cancelling the operation."
+          }
+        }
+      },
+      "ResolveAttentionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "idempotency_key",
+          "item_id",
+          "resolution",
+          "confirm",
+          "reason"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "description": "Caller-stable key that makes attention resolution safe to replay."
+          },
+          "item_id": {
+            "type": "string",
+            "pattern": "^item_[A-Za-z0-9_-]{8,64}$",
+            "description": "Trade item currently waiting for explicit attention."
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "mark_completed",
+              "retry_current",
+              "skip_item",
+              "fail_plan"
+            ],
+            "description": "Explicit operator decision after reviewing settlement evidence."
+          },
+          "confirm": {
+            "type": "boolean",
+            "const": true,
+            "description": "Must be true to authorize the attention resolution."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Audit reason supporting the selected resolution."
+          }
+        }
+      },
+      "TradePlanValidation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "valid",
+          "runtime_generation",
+          "items",
+          "errors"
+        ],
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "runtime_generation": {
+            "type": "string",
+            "description": "Runtime generation that must still match at enqueue."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradePlanItem"
+            }
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "TradePlan": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "plan_id",
+          "owner_id",
+          "game_mode",
+          "state",
+          "items",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "plan_id": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string"
+          },
+          "game_mode": {
+            "$ref": "#/components/schemas/ProgramMode"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PlanState"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradePlanItem"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TradePlanItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_id",
+          "client_item_id",
+          "position",
+          "state",
+          "attempt_count"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string"
+          },
+          "client_item_id": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/ItemState"
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ErrorResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "BotInstanceList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "runtime_generation",
+          "active_mode",
+          "instances"
+        ],
+        "properties": {
+          "runtime_generation": {
+            "type": "string"
+          },
+          "active_mode": {
+            "$ref": "#/components/schemas/ProgramMode"
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BotInstance"
+            }
+          }
+        }
+      },
+      "BotInstance": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instance_id",
+          "mode",
+          "connected",
+          "busy"
+        ],
+        "properties": {
+          "instance_id": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ProgramMode"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "busy": {
+            "type": "boolean"
+          }
+        }
+      },
+      "OperationAccepted": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "plan_id",
+          "state",
+          "poll_after_ms"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/OperationState"
+          },
+          "poll_after_ms": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 60000
+          }
+        }
+      },
+      "TradeOperation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "plan_id",
+          "state",
+          "current_item_position",
+          "updated_at"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/OperationState"
+          },
+          "current_item_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ErrorResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "TradeEventPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "events",
+          "has_more"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradeEvent"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_after_sequence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "TradeEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sequence",
+          "operation_id",
+          "plan_id",
+          "event_type",
+          "occurred_at"
+        ],
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "item_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_type": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 80
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message",
+          "details"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "INVALID_REQUEST",
+              "BOT_OFFLINE",
+              "BOT_BUSY",
+              "MODE_MISMATCH",
+              "QUEUE_CLOSED",
+              "LEGALITY_FAILED",
+              "ITEM_BLOCKED",
+              "PLAN_CONFLICT",
+              "PARTNER_DISCONNECTED",
+              "TRANSPORT_DISCONNECTED",
+              "SETTLEMENT_UNCERTAIN",
+              "EVOLUTION_BLOCKED",
+              "EVOLUTION_REQUIRES_ATTENTION",
+              "RATE_LIMITED",
+              "CONFIRMATION_REQUIRED"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

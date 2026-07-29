@@ -295,7 +295,8 @@ public partial class BotServer(
         }
 
         response.Headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS";
-        response.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
+        response.Headers["Access-Control-Allow-Headers"] =
+            "Content-Type, Authorization, Idempotency-Key";
         response.Headers["Vary"] = "Origin";
     }
     private async Task<(int statusCode, object? content, string contentType)> ProcessRequestAsync(HttpListenerRequest request)

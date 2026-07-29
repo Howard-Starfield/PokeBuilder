@@ -68,6 +68,12 @@ namespace SysBot.Pokemon
         public bool SetEdited { get; set; }
         public List<TPoke>? BatchTrades { get; set; }
 
+        /// <summary>
+        /// Optional control-plane lifecycle observer. Existing Discord, website,
+        /// and executor behavior is unchanged when no observer is attached.
+        /// </summary>
+        public Action<PokeTradeLifecycleStage>? LifecycleObserver { get; set; }
+
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
 
         public PokeTradeDetail(TPoke pkm, PokeTradeTrainerInfo info, IPokeTradeNotifier<TPoke> notifier, PokeTradeType type, int code, bool favored = false, List<Pictocodes>? lgcode = null, int batchTradeNumber = 0, int totalBatchTrades = 0, bool isMysteryEgg = false, int uniqueTradeID = 0, bool ignoreAutoOT = false, bool setEdited = false)
@@ -108,6 +114,9 @@ namespace SysBot.Pokemon
         public void SendNotification(PokeRoutineExecutor<TPoke> routine, PokeTradeSummary obj) => Notifier.SendNotification(routine, this, obj);
 
         public void SendNotification(PokeRoutineExecutor<TPoke> routine, TPoke obj, string message) => Notifier.SendNotification(routine, this, obj, message);
+
+        public void ReportLifecycle(PokeTradeLifecycleStage stage) =>
+            LifecycleObserver?.Invoke(stage);
 
         public bool Equals(PokeTradeDetail<TPoke>? other)
         {
@@ -157,5 +166,11 @@ namespace SysBot.Pokemon
         Jigglypuff,
 
         Diglett
+    }
+
+    public enum PokeTradeLifecycleStage
+    {
+        Confirming,
+        Settling,
     }
 }

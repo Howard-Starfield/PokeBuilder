@@ -171,6 +171,7 @@ namespace SysBot.Pokemon.WinForms
                     LogUtil.LogError($"Failed to initialize web server: {ex.Message}", "System");
                 }
             });
+            _ = Task.Run(() => McpControlPlaneService.TryStartAsync(this));
         }
 
         #region Enhanced Search Implementation
@@ -709,6 +710,9 @@ namespace SysBot.Pokemon.WinForms
 
             // Let the form close normally when X button is clicked
             // No longer minimizing to tray on close
+            Task.WhenAny(
+                McpControlPlaneService.StopAsync(),
+                Task.Delay(5_000)).GetAwaiter().GetResult();
             this.StopWebServer();
 
             try

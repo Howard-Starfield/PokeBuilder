@@ -837,6 +837,26 @@ public class PokeTradeBotLGPE(PokeTradeHub<PB7> Hub, PokeBotState Config) : Poke
 
     private async Task<PokeTradeResult> ConfirmAndStartTrading(PokeTradeDetail<PB7> detail, int slot, CancellationToken token)
     {
+        if (detail.RequiresControlPlaneEvolutionBlock())
+        {
+            var offeredData = await SwitchConnection.ReadBytesAsync(
+                OfferedPokemon,
+                0x104,
+                token).ConfigureAwait(false);
+            var offered = new PB7(offeredData);
+            if (offered.Species != 0 &&
+                offered.ChecksumValid &&
+                TradeEvolutions.WillTradeEvolve(
+                    offered.Species,
+                    offered.Form,
+                    offered.HeldItem,
+                    detail.TradeData.Species))
+            {
+                detail.SendNotification(this, "Trade cancelled before confirmation because the offered Pokémon would evolve.");
+                return PokeTradeResult.TradeEvolveNotAllowed;
+            }
+        }
+        detail.ReportLifecycle(PokeTradeLifecycleStage.Confirming);
         // We'll keep watching B1S1 for a change to indicate a trade started -> should try quitting at that point.
         var oldEC = await Connection.ReadBytesAsync((uint)GetSlotOffset(0, slot), 8, token).ConfigureAwait(false);
         Log("Confirming and initiating trade...");
@@ -855,6 +875,7 @@ public class PokeTradeBotLGPE(PokeTradeHub<PB7> Hub, PokeBotState Config) : Poke
             var newEC = await Connection.ReadBytesAsync((uint)GetSlotOffset(0, slot), 8, token).ConfigureAwait(false);
             if (!newEC.SequenceEqual(oldEC))
             {
+                detail.ReportLifecycle(PokeTradeLifecycleStage.Settling);
                 Log("Change detected in slot 1");
                 await Task.Delay(15_000, token).ConfigureAwait(false);
                 return PokeTradeResult.Success;

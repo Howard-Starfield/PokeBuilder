@@ -110,15 +110,19 @@ public abstract class PokeRoutineExecutor<T>(IConsoleBotManaged<IConsoleConnecti
         // Only deal with Wi-Fi for now.
         if (protocol is SwitchProtocol.WiFi)
         {
-            // If ReconnectAttempts is set to -1, this should allow it to reconnect (essentially) indefinitely.
-            for (int i = 0; i < (uint)attempts; i++)
+            // A negative setting remains effectively unbounded. The first reset
+            // is immediate; subsequent attempts use a bounded staged backoff.
+            var maxAttempts = attempts < 0 ? int.MaxValue : attempts;
+            for (int i = 0; i < maxAttempts; i++)
             {
+                var delay = TradeReconnectPolicy.GetDelayBeforeAttempt(i, extraDelay);
+                if (delay > 0)
+                    await Task.Delay(delay, token).ConfigureAwait(false);
+
                 LogUtil.LogInfo($"Trying to reconnect... ({i + 1})", Connection.Label);
                 Connection.Reset();
                 if (Connection.Connected)
                     break;
-
-                await Task.Delay(30_000 + extraDelay, token).ConfigureAwait(false);
             }
         }
         return Connection.Connected;

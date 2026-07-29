@@ -584,6 +584,26 @@ public class PokeTradeBotLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : PokeR
 
     private async Task<PokeTradeResult> ConfirmAndStartTrading(PokeTradeDetail<PA9> detail, CancellationToken token)
     {
+        if (detail.RequiresControlPlaneEvolutionBlock())
+        {
+            var offered = await ReadUntilPresentPointer(
+                Offsets.LinkTradePartnerPokemonPointer,
+                2_000,
+                0_200,
+                BoxFormatSlotSize,
+                token).ConfigureAwait(false);
+            if (offered is not null &&
+                TradeEvolutions.WillTradeEvolve(
+                    offered.Species,
+                    offered.Form,
+                    offered.HeldItem,
+                    detail.TradeData.Species))
+            {
+                detail.SendNotification(this, "Trade cancelled before confirmation because the offered Pokémon would evolve.");
+                return PokeTradeResult.TradeEvolveNotAllowed;
+            }
+        }
+        detail.ReportLifecycle(PokeTradeLifecycleStage.Confirming);
         // We'll keep watching B1S1 for a change to indicate a trade started -> should try quitting at that point.
         var oldEC = await SwitchConnection.ReadBytesAbsoluteAsync(BoxStartOffset, 8, token).ConfigureAwait(false);
 
@@ -600,6 +620,7 @@ public class PokeTradeBotLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : PokeR
             var newEC = await SwitchConnection.ReadBytesAbsoluteAsync(BoxStartOffset, 8, token).ConfigureAwait(false);
             if (!newEC.SequenceEqual(oldEC))
             {
+                detail.ReportLifecycle(PokeTradeLifecycleStage.Settling);
                 await Task.Delay(30_000, token).ConfigureAwait(false);
                 return PokeTradeResult.Success;
             }

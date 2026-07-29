@@ -305,6 +305,26 @@ public class PokeTradeBotBS : PokeRoutineExecutor8BS, ICountBot, ITradeBot, IDis
 
     private async Task<PokeTradeResult> ConfirmAndStartTrading(PokeTradeDetail<PB8> detail, CancellationToken token)
     {
+        if (detail.RequiresControlPlaneEvolutionBlock())
+        {
+            var offered = await ReadUntilPresent(
+                LinkTradePokemonOffset,
+                2_000,
+                0_200,
+                BoxFormatSlotSize,
+                token).ConfigureAwait(false);
+            if (offered is not null &&
+                TradeEvolutions.WillTradeEvolve(
+                    offered.Species,
+                    offered.Form,
+                    offered.HeldItem,
+                    detail.TradeData.Species))
+            {
+                detail.SendNotification(this, "Trade cancelled before confirmation because the offered Pokémon would evolve.");
+                return PokeTradeResult.TradeEvolveNotAllowed;
+            }
+        }
+        detail.ReportLifecycle(PokeTradeLifecycleStage.Confirming);
         if (token.IsCancellationRequested) return PokeTradeResult.RoutineCancel;
 
         // We'll keep watching B1S1 for a change to indicate a trade started -> should try quitting at that point.
@@ -327,6 +347,7 @@ public class PokeTradeBotBS : PokeRoutineExecutor8BS, ICountBot, ITradeBot, IDis
             var newEC = await SwitchConnection.ReadBytesAbsoluteAsync(BoxStartOffset, 8, token).ConfigureAwait(false);
             if (!newEC.SequenceEqual(oldEC))
             {
+                detail.ReportLifecycle(PokeTradeLifecycleStage.Settling);
                 // Check if partner offered a Pokemon that will evolve
                 if (Hub.Config.Trade.TradeConfiguration.DisallowTradeEvolve)
                 {
