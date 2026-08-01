@@ -185,6 +185,21 @@ public sealed class SqliteTradePlanStore : ITradePlanStore
                 ("$applied", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
         }
 
+        ExecuteNonQuery(
+            connection,
+            transaction,
+            """
+            DELETE FROM trade_leases
+            WHERE expires_at_ms <= $now
+               OR EXISTS (
+                    SELECT 1
+                    FROM trade_operations
+                    WHERE trade_operations.operation_id = trade_leases.operation_id
+                      AND trade_operations.state IN ('completed', 'failed', 'cancelled')
+               );
+            """,
+            ("$now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+
         transaction.Commit();
     }
 
@@ -1093,7 +1108,7 @@ public sealed class SqliteTradePlanStore : ITradePlanStore
         if (IsTerminal(operation.State))
             throw new TradeStoreConflictException(
                 $"A lease cannot be acquired for terminal operation '{operationId}'.");
-        ExecuteNonQuery(
+        var changed = ExecuteNonQuery(
             connection,
             transaction,
             """
@@ -1126,9 +1141,9 @@ public sealed class SqliteTradePlanStore : ITradePlanStore
         var current = ReadLease(connection, transaction, botInstanceId)
             ?? throw new TradeStoreNotFoundException(
                 $"Lease row for bot '{botInstanceId}' was not found after acquisition.");
-        var acquired = current.OperationId == operationId &&
-                       current.OwnerTokenHash == ownerTokenHash &&
-                       current.ExpiresAt == expiresAt;
+        var acquired = changed == 1 &&
+                       current.OperationId == operationId &&
+                       current.OwnerTokenHash == ownerTokenHash;
         transaction.Commit();
         return new(acquired, current);
     }

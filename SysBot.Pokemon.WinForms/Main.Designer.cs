@@ -373,6 +373,7 @@ namespace SysBot.Pokemon.WinForms
             titleLabel.Text = "Bot Management";
             titleLabel.MaximumSize = new Size(350, 35);
             titleLabel.AutoEllipsis = true;
+            titleLabel.UseMnemonic = false;
 
             // Control Buttons Panel
             controlButtonsPanel.Anchor = AnchorStyles.Top | AnchorStyles.Right;

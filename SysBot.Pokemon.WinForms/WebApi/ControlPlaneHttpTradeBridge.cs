@@ -154,12 +154,18 @@ internal static class ControlPlaneHttpTradeBridge
                     TradeOperationState.Failed or
                     TradeOperationState.Cancelled)
             {
+                var operationError = operation.Error ??
+                    ReadAdmissionFailure(
+                        orchestrator,
+                        ownerId,
+                        operationId,
+                        operation.Data?.State);
                 Cancel(orchestrator, ownerId, operationId, safeIdentity);
                 return new(
                     null,
                     null,
                     null,
-                    operation.Error ?? new(
+                    operationError ?? new(
                         TradeControlErrorCodes.BotBusy,
                         $"The trade operation could not enter the queue ({operation.Data?.State})."));
             }
@@ -293,6 +299,111 @@ internal static class ControlPlaneHttpTradeBridge
             TradePlanItemState.Completed or
             TradePlanItemState.Skipped or
             TradePlanItemState.Failed;
+
+    private static TradeControlError? ReadAdmissionFailure(
+        TradeOrchestrator orchestrator,
+        string ownerId,
+        string operationId,
+        TradeOperationState? state)
+    {
+        var response = orchestrator.ListTradeEvents(
+            ownerId,
+            operationId,
+            afterSequence: 0,
+            limit: 200);
+        if (!response.Success)
+            return response.Error;
+
+        var failure = response.Data!
+            .LastOrDefault(evt =>
+                evt.EventType.Contains("paused", StringComparison.Ordinal) ||
+                evt.EventType.Contains("failed", StringComparison.Ordinal));
+        if (failure is null)
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(failure.DetailsJson);
+            var root = document.RootElement;
+            var code = TryGetString(root, "code") ??
+                TradeControlErrorCodes.BotBusy;
+            var message = AdmissionFailureMessage(failure.EventType, code, state);
+
+            if (TryGetProperty(root, "error", out var error))
+            {
+                if (error.ValueKind == JsonValueKind.Object)
+                {
+                    code = TryGetString(error, "code") ?? code;
+                    message = TryGetString(error, "message") ?? message;
+                }
+                else if (error.ValueKind == JsonValueKind.String)
+                {
+                    message = error.GetString() ?? message;
+                }
+            }
+
+            return new(code, message);
+        }
+        catch (JsonException)
+        {
+            return new(
+                TradeControlErrorCodes.BotBusy,
+                AdmissionFailureMessage(
+                    failure.EventType,
+                    TradeControlErrorCodes.BotBusy,
+                    state));
+        }
+    }
+
+    private static string AdmissionFailureMessage(
+        string eventType,
+        string code,
+        TradeOperationState? state) => eventType switch
+        {
+            "dispatch_paused_runtime_unavailable" when
+                code == TradeControlErrorCodes.ModeMismatch =>
+                "The running bot changed to a different game mode before queue admission.",
+            "dispatch_paused_runtime_unavailable" or
+                "dispatch_paused_no_bot" =>
+                "No running trade bot is available for this request.",
+            "dispatch_paused_bot_busy" =>
+                "All running trade bots are busy admitting another request. Please try again shortly.",
+            "operation_paused_preparation_failed" =>
+                "The Pokemon could not be prepared for the current game.",
+            "operation_paused_queue_rejected" =>
+                "The live trade queue rejected this request.",
+            _ => $"The trade operation could not enter the queue ({state}).",
+        };
+
+    private static string? TryGetString(JsonElement element, string name) =>
+        TryGetProperty(element, name, out var value) &&
+        value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static bool TryGetProperty(
+        JsonElement element,
+        string name,
+        out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(
+                    property.Name,
+                    name,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
 
     internal static void Cancel(
         TradeOrchestrator orchestrator,

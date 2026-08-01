@@ -282,7 +282,7 @@ public class SqliteTradePlanStoreTests
         store.Initialize();
         var firstOperation = CreateRunningOperation(store, "leasea");
         var secondOperation = CreateRunningOperation(store, "leaseb");
-        var now = Baseline.AddMinutes(2);
+        var now = Baseline.AddMinutes(2).AddTicks(1_234);
 
         var first = store.TryAcquireLease(
             "bot-lza-1",
@@ -322,6 +322,46 @@ public class SqliteTradePlanStoreTests
             secondOperation.OperationId,
             "owner-b-hash").Should().BeTrue();
         store.GetLease("bot-lza-1").Should().BeNull();
+    }
+
+    [Fact]
+    public void Initialize_RemovesExpiredAndTerminalOperationLeases()
+    {
+        using var database = new TemporaryTradeDatabase();
+        var store = database.CreateStore();
+        store.Initialize();
+        var operation = CreateRunningOperation(store, "cleanup");
+        var now = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+        store.TryAcquireLease(
+            "bot-cleanup-1",
+            operation.OperationId,
+            "cleanup-owner-hash",
+            now,
+            now.AddMinutes(2)).Acquired.Should().BeTrue();
+
+        var terminalOperation = CreateRunningOperation(store, "terminal");
+        var terminalNow = DateTimeOffset.UtcNow;
+        store.TryAcquireLease(
+            "bot-cleanup-2",
+            terminalOperation.OperationId,
+            "terminal-owner-hash",
+            terminalNow,
+            terminalNow.AddMinutes(2)).Acquired.Should().BeTrue();
+        store.TransitionOperation(
+            terminalOperation.OperationId,
+            TradeOperationState.Running,
+            TradeOperationState.Cancelled,
+            TradePlanState.Running,
+            TradePlanState.Cancelled,
+            "cancel_requested",
+            "{}",
+            terminalNow.AddSeconds(1));
+
+        store.Initialize();
+
+        store.GetLease("bot-cleanup-1").Should().BeNull();
+        store.GetLease("bot-cleanup-2").Should().BeNull();
     }
 
     [Fact]

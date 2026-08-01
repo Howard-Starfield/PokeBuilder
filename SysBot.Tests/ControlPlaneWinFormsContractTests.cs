@@ -74,6 +74,42 @@ public sealed class ControlPlaneWinFormsContractTests
         source.Should().NotContain("CancelTradeOperation(");
     }
 
+    [Fact]
+    public void AutomationAndTestingPanels_UseDockedLayouts()
+    {
+        var source = ReadSource(
+            "SysBot.Pokemon.WinForms",
+            "ControlPlaneOperatorPanels.cs");
+
+        source.Should().Contain("var layout = new TableLayoutPanel", Exactly.Twice());
+        source.Should().Contain("_settings = new ConfigurationSettingsTree");
+        source.Should().Contain("Dock = DockStyle.Fill");
+        source.Should().NotContain("Location = new Point(18, 92)");
+        source.Should().NotContain("Location = new Point(18, 98)");
+        source.Should().NotContain("Size = new Size(800, 418)");
+        source.Should().NotContain("Size = new Size(800, 106)");
+    }
+
+    [Fact]
+    public void ConfigurationDropDowns_AreClampedToTheWorkingArea()
+    {
+        var placement = ReadSource(
+            "SysBot.Pokemon.WinForms",
+            "DropDownPlacement.cs");
+        var settings = ReadSource(
+            "SysBot.Pokemon.WinForms",
+            "ConfigurationSettingsTree.cs");
+        var collections = ReadSource(
+            "SysBot.Pokemon.WinForms",
+            "ConfigurationCollectionEditor.cs");
+
+        placement.Should().Contain("Screen.FromControl(owner).WorkingArea");
+        placement.Should().Contain("workingArea.Right - width");
+        placement.Should().Contain("workingArea.Bottom");
+        settings.Should().Contain("DropDownPlacement.ShowBelow(this, menu, menuWidth)");
+        collections.Should().Contain("DropDownPlacement.ShowBelow(owner, _dropDown, control.Width)");
+    }
+
     private static string ReadSource(params string[] relativePath) =>
         File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),

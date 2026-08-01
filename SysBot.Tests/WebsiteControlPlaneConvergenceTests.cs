@@ -40,6 +40,14 @@ public sealed class WebsiteControlPlaneConvergenceTests
         bridge.Should().Contain("orchestrator.CreateTradePlan(command)");
         bridge.Should().Contain("orchestrator.EnqueueTradePlanWithQueueHints(");
         bridge.Should().Contain("Evolution = TradeEvolutionPolicy.Block");
+        bridge.Should().Contain("ReadAdmissionFailure(",
+            "website failures must expose the durable queue rejection reason");
+        handler.Should().Contain("estimated_wait_minutes",
+            "queue admission responses must expose the canonical SysBot ETA");
+        handler.Should().Contain("queue_count",
+            "queue admission responses must expose current live queue depth");
+        handler.Should().Contain("queue_open = queue.Open",
+            "backend health must distinguish running from queue-ready");
 
         startup.IndexOf(
             "_orchestrator = orchestrator;",

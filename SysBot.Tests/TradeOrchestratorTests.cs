@@ -118,6 +118,39 @@ public sealed class TradeOrchestratorTests
     }
 
     [Fact]
+    public void MultipleOperations_CanEnterOneBotsLiveQueue()
+    {
+        using var database = new TemporaryDatabase();
+        var fixture = database.CreateFixture();
+        using var orchestrator = fixture.Orchestrator;
+        var firstPlan = CreatePlan(orchestrator, 1);
+        var secondPlan = CreatePlan(orchestrator, 2);
+
+        var first = orchestrator.EnqueueTradePlan(
+            "owner-a",
+            firstPlan.PlanId,
+            "enqueue-multi-0001");
+        first.Success.Should().BeTrue();
+        fixture.Queue.WaitForEnqueueCount(1);
+
+        var second = orchestrator.EnqueueTradePlan(
+            "owner-a",
+            secondPlan.PlanId,
+            "enqueue-multi-0002");
+        second.Success.Should().BeTrue();
+        fixture.Queue.WaitForEnqueueCount(2);
+
+        var secondAdmission = orchestrator.GetQueueAdmission(
+            "owner-a",
+            second.Data!.OperationId);
+        secondAdmission.Success.Should().BeTrue();
+        secondAdmission.Data!.QueuePosition.Should().Be(2);
+        secondAdmission.Data.QueueCount.Should().Be(2);
+        secondAdmission.Data.EstimatedWaitMinutes.Should().Be(2.2f);
+        WaitUntil(() => fixture.Store.GetLease("switch-a:0") is null);
+    }
+
+    [Fact]
     public void RestartBeforeConfirmation_ReacquiresDispatcherAndRequeues()
     {
         using var database = new TemporaryDatabase();
@@ -150,8 +183,7 @@ public sealed class TradeOrchestratorTests
             .Should().Be(TradePlanItemState.Prepared);
         restarted.Store.GetAttempts(itemId).Single().FailureCode
             .Should().Be(TradeControlErrorCodes.TransportDisconnected);
-        restarted.Store.GetLease("switch-a:0")!.OperationId
-            .Should().Be(operation.OperationId);
+        WaitUntil(() => restarted.Store.GetLease("switch-a:0") is null);
     }
 
     [Fact]
@@ -574,6 +606,12 @@ public sealed class TradeOrchestratorTests
         public int QueuePosition { get; }
 
         public int BypassedCount => 0;
+
+        public int QueueCount => QueuePosition;
+
+        public float EstimatedWaitMinutes => QueuePosition > 1
+            ? QueuePosition * 1.1f
+            : 0;
 
         public bool CancellationRequested { get; private set; }
 

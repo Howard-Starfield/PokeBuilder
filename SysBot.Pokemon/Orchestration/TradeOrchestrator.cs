@@ -37,7 +37,9 @@ public sealed record TradeQueueSubmissionHints(
 
 public sealed record TradeQueueAdmission(
     int QueuePosition,
-    int BypassedCount);
+    int BypassedCount,
+    int QueueCount,
+    float EstimatedWaitMinutes);
 
 /// <summary>
 /// Durable application service that owns plan preparation, queue supervision,
@@ -49,7 +51,7 @@ public sealed class TradeOrchestrator :
     IDisposable
 {
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
-    private static readonly TimeSpan LeaseRenewInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DispatchRetryDelay = TimeSpan.FromMilliseconds(100);
 
     private readonly ITradePlanStore _store;
     private readonly TradePlanApplicationService _plans;
@@ -187,7 +189,9 @@ public sealed class TradeOrchestrator :
                     $"Operation '{operationId}' has not been admitted to a live queue.")
                 : TradeControlResponse<TradeQueueAdmission>.Ok(new(
                     active.Registration.QueuePosition,
-                    active.Registration.BypassedCount));
+                    active.Registration.BypassedCount,
+                    active.Registration.QueueCount,
+                    active.Registration.EstimatedWaitMinutes));
         }
     }
 
@@ -815,16 +819,7 @@ public sealed class TradeOrchestrator :
             }
             if (bot is null)
             {
-                TransitionOperation(
-                    operation,
-                    TradeOperationState.Paused,
-                    TradePlanState.Paused,
-                    "dispatch_paused_bot_busy",
-                    new
-                    {
-                        code = TradeControlErrorCodes.BotBusy,
-                        candidate_count = candidates.Length,
-                    });
+                _ = Task.Run(() => RetryDispatchWhenLeaseAvailable(operationId));
                 return;
             }
 
@@ -850,9 +845,6 @@ public sealed class TradeOrchestrator :
                     bot_instance_id = bot.InstanceId,
                     runtime_generation = snapshot.Generation,
                 });
-            active.RenewalTask = Task.Run(
-                () => RenewLease(active),
-                active.Cancellation.Token);
             RequeueRunningOperation(operationId, TimeSpan.Zero);
         }
         catch (Exception ex)
@@ -861,6 +853,19 @@ public sealed class TradeOrchestrator :
                 $"Unable to dispatch trade operation {operationId}: {ex.Message}",
                 nameof(TradeOrchestrator));
             ReleaseActive(operationId);
+        }
+    }
+
+    private async Task RetryDispatchWhenLeaseAvailable(string operationId)
+    {
+        try
+        {
+            await Task.Delay(DispatchRetryDelay, _shutdown.Token)
+                .ConfigureAwait(false);
+            DispatchQueuedOperation(operationId);
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 
@@ -1011,6 +1016,7 @@ public sealed class TradeOrchestrator :
         {
             lock (active.Sync)
                 active.Registration = result.Registration;
+            ReleaseDispatchLease(active);
         }
     }
 
@@ -1524,37 +1530,6 @@ public sealed class TradeOrchestrator :
         return updated;
     }
 
-    private async Task RenewLease(ActiveOperation active)
-    {
-        try
-        {
-            while (!active.Cancellation.IsCancellationRequested &&
-                   !_shutdown.IsCancellationRequested)
-            {
-                await Task.Delay(
-                    LeaseRenewInterval,
-                    active.Cancellation.Token).ConfigureAwait(false);
-                var now = _clock.UtcNow;
-                if (!_store.RenewLease(
-                    active.BotInstanceId,
-                    active.OperationId,
-                    active.LeaseOwnerHash,
-                    now,
-                    now.Add(LeaseDuration)))
-                {
-                    LogUtil.LogError(
-                        $"Lost orchestration lease for {active.OperationId}.",
-                        nameof(TradeOrchestrator));
-                    active.Registration?.RequestCancellation();
-                    break;
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-    }
-
     private void CancelRegistration(string operationId)
     {
         if (_active.TryGetValue(operationId, out var active))
@@ -1568,12 +1543,24 @@ public sealed class TradeOrchestrator :
     {
         if (!_active.TryRemove(operationId, out var active))
             return;
-        active.Cancellation.Cancel();
+        ReleaseDispatchLease(active);
+    }
+
+    private void ReleaseDispatchLease(ActiveOperation active)
+    {
+        lock (active.Sync)
+        {
+            if (!active.LeaseHeld)
+                return;
+            active.LeaseHeld = false;
+        }
+
+        // The durable lease serializes admission into the live SysBot queue. Once admitted,
+        // that queue owns execution ordering and keeps each physical bot single-threaded.
         _store.ReleaseLease(
             active.BotInstanceId,
-            operationId,
+            active.OperationId,
             active.LeaseOwnerHash);
-        active.Cancellation.Dispose();
     }
 
     private void FinalizeSubmission(string operationId)
@@ -1791,12 +1778,10 @@ public sealed class TradeOrchestrator :
 
         public string RuntimeGeneration { get; }
 
-        public CancellationTokenSource Cancellation { get; } = new();
-
         public ITradeQueueRegistration? Registration { get; set; }
 
         public PendingOperationAction PendingAction { get; set; }
 
-        public Task? RenewalTask { get; set; }
+        public bool LeaseHeld { get; set; } = true;
     }
 }

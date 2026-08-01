@@ -69,6 +69,10 @@ public interface ITradeQueueRegistration
 
     int BypassedCount { get; }
 
+    int QueueCount { get; }
+
+    float EstimatedWaitMinutes { get; }
+
     void RequestCancellation();
 }
 
@@ -382,7 +386,16 @@ public sealed class SysBotTradeQueueAdapter : ITradeQueueAdapter
                 (preAddEntryCount + 1) -
                 hub.Queues.Info.GetEntryPosition(trainerId, uniqueId))
             : 0;
-        registration.SetAdmission(position, bypassed);
+        var queueCount = hub.Queues.Info.Count;
+        var botCount = Math.Max(1, hub.Bots.Count);
+        var estimatedWaitMinutes = position > botCount
+            ? hub.Config.Queues.EstimateDelay(position, botCount)
+            : 0;
+        registration.SetAdmission(
+            position,
+            bypassed,
+            queueCount,
+            estimatedWaitMinutes);
         return new(registration, null);
     }
 
@@ -539,10 +552,20 @@ public sealed class SysBotTradeQueueAdapter : ITradeQueueAdapter
 
         public int BypassedCount { get; private set; }
 
-        public void SetAdmission(int queuePosition, int bypassedCount)
+        public int QueueCount { get; private set; }
+
+        public float EstimatedWaitMinutes { get; private set; }
+
+        public void SetAdmission(
+            int queuePosition,
+            int bypassedCount,
+            int queueCount,
+            float estimatedWaitMinutes)
         {
             QueuePosition = queuePosition;
             BypassedCount = bypassedCount;
+            QueueCount = queueCount;
+            EstimatedWaitMinutes = estimatedWaitMinutes;
         }
 
         public void RequestCancellation()

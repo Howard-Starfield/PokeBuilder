@@ -79,6 +79,8 @@ public static class TradeApiHandler
                 trade_id = record.TradeId,
                 trade_code = record.TradeCode,
                 queue_position = submission.Admission.QueuePosition,
+                queue_count = submission.Admission.QueueCount,
+                estimated_wait_minutes = submission.Admission.EstimatedWaitMinutes,
                 is_favored = isFavored,
                 bypassed_count = submission.Admission.BypassedCount,
             });
@@ -96,6 +98,8 @@ public static class TradeApiHandler
             trade_id = record.TradeId,
             trade_code = record.TradeCode,
             queue_position = enqueueResult.QueuePosition,
+            queue_count = enqueueResult.QueueCount,
+            estimated_wait_minutes = enqueueResult.EstimatedWaitMinutes,
             is_favored = isFavored,
             bypassed_count = enqueueResult.BypassedCount,
         });
@@ -197,6 +201,8 @@ public static class TradeApiHandler
                     trade_id = record.TradeId,
                     trade_code = record.TradeCode,
                     queue_position = submission.Admission.QueuePosition,
+                    queue_count = submission.Admission.QueueCount,
+                    estimated_wait_minutes = submission.Admission.EstimatedWaitMinutes,
                     total = 1,
                     skipped,
                     is_favored = isFavored,
@@ -216,6 +222,8 @@ public static class TradeApiHandler
                 trade_id       = record.TradeId,
                 trade_code     = record.TradeCode,
                 queue_position = enqueueResult.QueuePosition,
+                queue_count    = enqueueResult.QueueCount,
+                estimated_wait_minutes = enqueueResult.EstimatedWaitMinutes,
                 total          = 1,
                 skipped,
                 is_favored     = isFavored,
@@ -252,6 +260,8 @@ public static class TradeApiHandler
                 trade_id = record.TradeId,
                 trade_code = record.TradeCode,
                 queue_position = submission.Admission.QueuePosition,
+                queue_count = submission.Admission.QueueCount,
+                estimated_wait_minutes = submission.Admission.EstimatedWaitMinutes,
                 total = validPkm.Count,
                 skipped,
                 is_favored = isFavored,
@@ -274,6 +284,8 @@ public static class TradeApiHandler
             trade_id       = record.TradeId,
             trade_code     = record.TradeCode,
             queue_position = batchEnqueueResult.QueuePosition,
+            queue_count    = batchEnqueueResult.QueueCount,
+            estimated_wait_minutes = batchEnqueueResult.EstimatedWaitMinutes,
             total          = validPkm.Count,
             skipped,
             is_favored     = isFavored,
@@ -284,13 +296,22 @@ public static class TradeApiHandler
     public static (int, object?, string) HandleGetStatus(IPokeBotRunner? runner)
     {
         if (runner == null)
-            return Ok(new { running = false, game_mode = "Unknown", queue_count = 0 });
+            return Ok(new
+            {
+                running = false,
+                game_mode = "Unknown",
+                queue_count = 0,
+                queue_open = false,
+            });
+
+        var queue = GetLiveQueueStatus(runner);
 
         return Ok(new
         {
             running = runner.IsRunning,
             game_mode = runner.Config.Distribution.CurrentMode.ToString(),
-            queue_count = HttpTradeRegistry.ActiveTrades.Count,
+            queue_count = queue.Count,
+            queue_open = queue.Open,
         });
     }
 
@@ -371,7 +392,30 @@ public static class TradeApiHandler
         string[]? DiscordRoles = null
     );
 
-    private sealed record EnqueueResult(int QueuePosition, int BypassedCount);
+    private sealed record EnqueueResult(
+        int QueuePosition,
+        int BypassedCount,
+        int QueueCount,
+        float EstimatedWaitMinutes);
+
+    private static (int Count, bool Open) GetLiveQueueStatus(
+        IPokeBotRunner runner) =>
+        runner.Config.Distribution.CurrentMode switch
+        {
+            ProgramMode.SWSH when runner is PokeBotRunner<PK8> typed =>
+                (typed.Hub.Queues.Info.Count, typed.Hub.Queues.Info.GetCanQueue()),
+            ProgramMode.BDSP when runner is PokeBotRunner<PB8> typed =>
+                (typed.Hub.Queues.Info.Count, typed.Hub.Queues.Info.GetCanQueue()),
+            ProgramMode.LA when runner is PokeBotRunner<PA8> typed =>
+                (typed.Hub.Queues.Info.Count, typed.Hub.Queues.Info.GetCanQueue()),
+            ProgramMode.SV when runner is PokeBotRunner<PK9> typed =>
+                (typed.Hub.Queues.Info.Count, typed.Hub.Queues.Info.GetCanQueue()),
+            ProgramMode.LGPE when runner is PokeBotRunner<PB7> typed =>
+                (typed.Hub.Queues.Info.Count, typed.Hub.Queues.Info.GetCanQueue()),
+            ProgramMode.LZA when runner is PokeBotRunner<PA9> typed =>
+                (typed.Hub.Queues.Info.Count, typed.Hub.Queues.Info.GetCanQueue()),
+            _ => (0, false),
+        };
 
     private static string Json(object obj) => JsonSerializer.Serialize(obj, _jsonOpts);
 
@@ -584,7 +628,7 @@ public static class TradeApiHandler
         int bypassedCount = isFavored
             ? Math.Max(0, (preAddEntryCount + 1) - hub.Queues.Info.GetEntryPosition(userId, detail.UniqueTradeID))
             : 0;
-        return new EnqueueResult(queuePosition, bypassedCount);
+        return CreateEnqueueResult(hub, queuePosition, bypassedCount);
     }
 
     private static EnqueueResult? EnqueueBatchTrade(
@@ -677,6 +721,24 @@ public static class TradeApiHandler
         int bypassedCount = isFavored
             ? Math.Max(0, (preAddEntryCount + 1) - hub.Queues.Info.GetEntryPosition(userId, uniqueId))
             : 0;
-        return new EnqueueResult(queuePosition, bypassedCount);
+        return CreateEnqueueResult(hub, queuePosition, bypassedCount);
+    }
+
+    private static EnqueueResult CreateEnqueueResult<T>(
+        PokeTradeHub<T> hub,
+        int queuePosition,
+        int bypassedCount)
+        where T : PKM, new()
+    {
+        var queueCount = hub.Queues.Info.Count;
+        var botCount = Math.Max(1, hub.Bots.Count);
+        var estimatedWaitMinutes = queuePosition > botCount
+            ? hub.Config.Queues.EstimateDelay(queuePosition, botCount)
+            : 0;
+        return new(
+            queuePosition,
+            bypassedCount,
+            queueCount,
+            estimatedWaitMinutes);
     }
 }

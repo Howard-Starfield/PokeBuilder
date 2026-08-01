@@ -24,7 +24,7 @@ internal static class ConfigurationCollectionEditor
         if (value is not IList)
             return;
 
-        using var service = new CollectionEditorService(ownerControl.FindForm());
+        using var service = new CollectionEditorService(ownerControl);
         var context = new CollectionEditorContext(owner, property, service);
         var editor =
             property.GetEditor(typeof(UITypeEditor)) as UITypeEditor ??
@@ -55,7 +55,7 @@ internal static class ConfigurationCollectionEditor
         public bool OnComponentChanging() => true;
     }
 
-    private sealed class CollectionEditorService(IWin32Window? owner)
+    private sealed class CollectionEditorService(Control owner)
         : IServiceProvider, IWindowsFormsEditorService, IDisposable
     {
         private ToolStripDropDown? _dropDown;
@@ -83,7 +83,7 @@ internal static class ConfigurationCollectionEditor
                 Size = control.Size,
             };
             _dropDown.Items.Add(host);
-            _dropDown.Show(Cursor.Position);
+            DropDownPlacement.ShowBelow(owner, _dropDown, control.Width);
             while (_dropDown.Visible)
                 Application.DoEvents();
             _dropDown.Dispose();

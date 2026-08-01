@@ -319,36 +319,51 @@ internal sealed class AutomationControlPanel : UserControl
     {
         AccessibleName = "Startup and restart automation";
         BackColor = ConfigurationTheme.Canvas;
+        Padding = new Padding(18);
 
         var heading = new Label
         {
             AutoSize = true,
+            Dock = DockStyle.Fill,
             Font = new Font("Segoe UI Semibold", 13F),
             ForeColor = ConfigurationTheme.TextPrimary,
-            Location = new Point(18, 18),
+            Margin = Padding.Empty,
             Text = "AUTOMATION & RESTARTS",
+            UseMnemonic = false,
         };
         var description = new Label
         {
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             AutoEllipsis = true,
+            Dock = DockStyle.Fill,
             Font = new Font("Segoe UI", 9F),
             ForeColor = ConfigurationTheme.TextMuted,
-            Location = new Point(18, 50),
-            Size = new Size(790, 38),
+            Margin = new Padding(0, 6, 0, 0),
             Text = "Persist PokeBot across Windows sign-in, start configured bots automatically, and schedule maintenance restarts.",
         };
 
         _settings = new ConfigurationSettingsTree
         {
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-            Location = new Point(18, 92),
-            Size = new Size(800, 418),
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
         };
 
-        Controls.Add(heading);
-        Controls.Add(description);
-        Controls.Add(_settings);
+        var layout = new TableLayoutPanel
+        {
+            BackColor = Color.Transparent,
+            ColumnCount = 1,
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            RowCount = 3,
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        layout.Controls.Add(heading, 0, 0);
+        layout.Controls.Add(description, 0, 1);
+        layout.Controls.Add(_settings, 0, 2);
+        Controls.Add(layout);
         VisibleChanged += (_, _) =>
         {
             if (Visible)
@@ -416,30 +431,29 @@ internal sealed class ControlPlaneTestingPanel : UserControl
         var heading = new Label
         {
             AutoSize = true,
+            Dock = DockStyle.Fill,
             Font = new Font("Segoe UI Semibold", 13F),
             ForeColor = ConfigurationTheme.TextPrimary,
-            Location = new Point(18, 18),
+            Margin = Padding.Empty,
             Text = "SYSTEM TESTING",
         };
         var description = new Label
         {
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             AutoEllipsis = true,
+            Dock = DockStyle.Fill,
             Font = new Font("Segoe UI", 9F),
             ForeColor = ConfigurationTheme.TextMuted,
-            Location = new Point(18, 50),
-            Size = new Size(790, 38),
+            Margin = new Padding(0, 6, 0, 0),
             Text = "Inspect MCP and automation readiness. Restart tests always require confirmation before changing runtime state.",
         };
 
         var actions = new FlowLayoutPanel
         {
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             BackColor = ConfigurationTheme.SurfaceRaised,
+            Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
-            Location = new Point(18, 98),
+            Margin = Padding.Empty,
             Padding = new Padding(10),
-            Size = new Size(800, 106),
             WrapContents = true,
         };
         _healthButton = CreateButton("TEST MCP HEALTH");
@@ -472,22 +486,36 @@ internal sealed class ControlPlaneTestingPanel : UserControl
 
         _results = new RichTextBox
         {
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
             BackColor = ConfigurationTheme.Surface,
             BorderStyle = BorderStyle.FixedSingle,
+            Dock = DockStyle.Fill,
             Font = new Font("Consolas", 9F),
             ForeColor = ConfigurationTheme.TextPrimary,
-            Location = new Point(18, 218),
+            Margin = new Padding(0, 12, 0, 0),
             ReadOnly = true,
-            Size = new Size(800, 292),
             Text = "Select a test above. Runtime-changing tests will ask for confirmation.\n",
         };
         clearButton.Click += (_, _) => _results.Clear();
 
-        Controls.Add(heading);
-        Controls.Add(description);
-        Controls.Add(actions);
-        Controls.Add(_results);
+        var layout = new TableLayoutPanel
+        {
+            BackColor = Color.Transparent,
+            ColumnCount = 1,
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            RowCount = 4,
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 112F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        layout.Controls.Add(heading, 0, 0);
+        layout.Controls.Add(description, 0, 1);
+        layout.Controls.Add(actions, 0, 2);
+        layout.Controls.Add(_results, 0, 3);
+        Controls.Add(layout);
     }
 
     public void Attach(Main main) => _main = main;

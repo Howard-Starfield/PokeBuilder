@@ -1050,7 +1050,10 @@ internal sealed class ModernChoiceEditor : Button
             previousMenu.Dispose();
 
         var itemHeight = ConfigurationTheme.ScalePixels(36, _scalePercent);
-        var menuWidth = Math.Max(Width, ConfigurationTheme.ScalePixels(160, _scalePercent));
+        var workingWidth = Screen.FromControl(this).WorkingArea.Width;
+        var menuWidth = Math.Min(
+            Math.Max(Width, ConfigurationTheme.ScalePixels(160, _scalePercent)),
+            workingWidth);
         var menu = new ContextMenuStrip
         {
             AutoSize = true,
@@ -1117,7 +1120,7 @@ internal sealed class ModernChoiceEditor : Button
             }
         };
         _activeMenu = menu;
-        menu.Show(this, new Point(0, Height));
+        DropDownPlacement.ShowBelow(this, menu, menuWidth);
     }
 
     private void UpdateAccessibleName() =>
